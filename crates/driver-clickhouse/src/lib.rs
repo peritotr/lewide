@@ -444,7 +444,8 @@ impl Connection for ClickHouseConnection {
                 let expression = text(&r[3]);
                 ColumnDescription {
                     name: text(&r[0]),
-                    nullable: ty.starts_with("Nullable("),
+                    nullable: ty.starts_with("Nullable(")
+                        || ty.starts_with("LowCardinality(Nullable("),
                     type_name: Some(ty),
                     // MATERIALIZED and ALIAS columns are computed: the kind says so.
                     default_value: match kind.as_str() {

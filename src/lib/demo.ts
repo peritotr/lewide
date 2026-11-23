@@ -288,6 +288,11 @@ export const demoBackend: Backend = {
   docFind: async (_session, request) => {
     await wait(150);
     const int = (n: number) => ({ $numberInt: String(n) });
+    // An aggregation answers with documents its stages built, here tags and their counts.
+    if (request.pipeline) {
+      const groups = [{ _id: "office", n: int(1) }, { _id: "wood", n: int(1) }, { _id: "lighting", n: int(1) }];
+      return { skip: request.skip, has_more: false, elapsed_ms: 9, documents: groups.map((document) => ({ document, size_bytes: 31 })) };
+    }
     const documents = [
       { _id: { $oid: "65f1c0a2b7e4d3a1c0ffee01" }, name: "Walnut desk", price: { amount: { $numberDouble: "429.5" }, currency: "EUR" }, stock: int(14), tags: ["office", "wood"], created: { $date: { $numberLong: "1700000000000" } }, discontinued: null },
       { _id: { $oid: "65f1c0a2b7e4d3a1c0ffee02" }, name: "Task lamp", price: { amount: { $numberDouble: "64" }, currency: "EUR" }, stock: int(230), tags: ["lighting"], created: { $date: { $numberLong: "1701000000000" } } },

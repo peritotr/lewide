@@ -92,6 +92,9 @@ function fieldsFor(driverId: string): Fields {
       return { database: null, user: true, secret: msg("Password"), options: ["apiKey"] };
     case "pgvector":
       return { ...standard, options: ["metric"] };
+    case "sqlserver":
+      // Not drawn in the design: a named instance, also accepted as server\instance in the host field.
+      return { ...standard, options: ["instance"] };
     case "sqlite":
     case "duckdb":
       return { ...standard, options: ["create"] };

@@ -1,4 +1,4 @@
-import { ArrowRight, Bookmark, ChevronDown, ChevronRight, Circle, Database, Ellipsis, Layers, Plus, Search, Table, Terminal, TriangleAlert, PanelLeftOpen } from "lucide-react";
+import { ArrowRight, Bookmark, ChevronDown, ChevronRight, Circle, Database, Ellipsis, Folder, Layers, Plus, Search, Table, Terminal, TriangleAlert, PanelLeftOpen } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, compactCount, type GraphLabel } from "../lib/api";
 import { typeOf } from "../lib/types";
@@ -22,7 +22,8 @@ import {
   type Conn, setSidebarCollapsed } from "../store";
 import { isMac } from "./TitleBar";
 import { colourVar, EnvTag, IconButton, RegMarks, Splitter } from "./ui";
-import { t } from "../i18n";
+import { t, tn } from "../i18n";
+import { prefixPattern, prefixTree, type KeyPrefix } from "../lib/kv";
 
 const Chevron = ({ open }: { open: boolean }) => (open ? <ChevronDown size={12} /> : <ChevronRight size={12} />);
 
@@ -403,14 +404,7 @@ function ObjectTree({ conn, needle }: { conn: Conn; needle: string }) {
           const objects = conn.objects[namespace];
           if (conn.driver.model === "graph") return <GraphTree key={namespace} conn={conn} database={namespace} indent={base} needle={needle} />;
           // A key-value store has no tables: its databases open the key list.
-          if (conn.driver.model === "key_value") {
-            return (
-              <TreeRow key={namespace} indent={base} onDoubleClick={() => openKeys(conn.id, Number(/\d+/.exec(namespace)?.[0] ?? 0))}>
-                <Database size={13} className="text-text-3" />
-                <span className="truncate font-mono text-[12px]">{namespace}</span>
-              </TreeRow>
-            );
-          }
+          if (conn.driver.model === "key_value") return <KeyPrefixTree key={namespace} conn={conn} database={namespace} indent={base} needle={needle} />;
           return (
             <div key={namespace}>
               <TreeRow indent={base} onClick={() => toggleNamespace(namespace)}>
@@ -469,6 +463,83 @@ const cypherName = (name: string) => `\`${name.replace(/`/g, "``")}\``;
  * when the database is first opened. Double-clicking one opens a graph tab
  * with a query for it (not drawn in the design).
  */
+/** Keys read for the sidebar's prefix groups: enough to show the shape of the keyspace, without reading all of it. */
+const PREFIX_SAMPLE = 2000;
+
+/** A key-value database with its key prefixes, split on `:`, from the first keys a scan returns. */
+function KeyPrefixTree({ conn, database, indent, needle }: { conn: Conn; database: string; indent: number; needle: string }) {
+  const expanded = useApp((s) => s.expanded);
+  const key = nodeKey(conn.id, database);
+  const open = !!expanded[key];
+  const db = Number(/\d+/.exec(database)?.[0] ?? 0);
+  const [sample, setSample] = useState<{ groups: KeyPrefix[]; read: number; complete: boolean } | "error" | null>(null);
+
+  // Closing the row forgets the sample, so opening it again reads the keys afresh.
+  useEffect(() => {
+    if (!open) setSample(null);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || sample !== null || conn.session === null) return;
+    const session = conn.session;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const keys: string[] = [];
+        let cursor = "0";
+        do {
+          const page = await api.kvScan(session, db, "*", null, cursor, 500);
+          keys.push(...page.keys.map((k) => k.key));
+          cursor = page.cursor;
+        } while (cursor !== "0" && keys.length < PREFIX_SAMPLE && !cancelled);
+        if (!cancelled) setSample({ groups: prefixTree(keys), read: keys.length, complete: cursor === "0" });
+      } catch {
+        if (!cancelled) setSample("error");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, sample, conn.session, db]);
+
+  const rows = (groups: KeyPrefix[], level: number): ReactNode[] =>
+    groups
+      .filter((g) => !needle || g.prefix.toLowerCase().includes(needle) || level > 0)
+      .flatMap((group) => {
+        const groupKey = nodeKey(conn.id, database, group.prefix);
+        const groupOpen = !!expanded[groupKey];
+        return [
+          <TreeRow key={group.prefix} indent={indent + 14 * (level + 1)} onClick={() => group.children.length && toggleNode(groupKey)} onDoubleClick={() => openKeys(conn.id, db, prefixPattern(group.prefix))}>
+            {group.children.length ? <Chevron open={groupOpen} /> : <span className="w-[13px] shrink-0" />}
+            <Folder size={13} className="text-text-3" />
+            <span className="min-w-0 flex-1 truncate font-mono text-[12px]">{group.label}:</span>
+            <span className="font-mono text-[11px] text-text-3">{group.count}</span>
+          </TreeRow>,
+          ...(groupOpen ? rows(group.children, level + 1) : []),
+        ];
+      });
+
+  return (
+    <div>
+      <TreeRow indent={indent} onClick={() => toggleNode(key)} onDoubleClick={() => openKeys(conn.id, db, "")}>
+        <Chevron open={open} />
+        <Database size={13} className="text-text-3" />
+        <span className="truncate font-mono text-[12px]">{database}</span>
+      </TreeRow>
+      {open && sample === "error" && <p className="py-[3px] text-[12px] text-danger" style={{ paddingLeft: indent + 32 }}>{t("Could not read the keys.")}</p>}
+      {open && sample === null && <p className="py-[3px] text-[12px] text-text-3" style={{ paddingLeft: indent + 32 }}>{t("Reading keys…")}</p>}
+      {open && sample && sample !== "error" && (
+        <>
+          {rows(sample.groups, 0)}
+          <p className="py-[3px] text-[11px] text-text-3" style={{ paddingLeft: indent + 32 }}>
+            {sample.groups.length === 0 ? t("No key prefixes.") : sample.complete ? tn(sample.read, "From all {count} key.", "From all {count} keys.") : tn(sample.read, "From the first {count} key scanned.", "From the first {count} keys scanned.")}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 function GraphTree({ conn, database, indent, needle }: { conn: Conn; database: string; indent: number; needle: string }) {
   const expanded = useApp((s) => s.expanded);
   const key = nodeKey(conn.id, database);

@@ -79,6 +79,7 @@ fn find(database: &str, index: &str, filter: Option<&str>) -> FindRequest {
         sort: Some(r#"{"year": 1}"#.into()),
         skip: 0,
         limit: 50,
+        pipeline: None,
     }
 }
 

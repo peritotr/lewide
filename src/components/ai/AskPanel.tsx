@@ -1,15 +1,14 @@
-// The Ask AI panel beside the editor (AI04–AI08, AI10–AI12).
-// Findings with editor marks (AI05) need structured answers the core does not
-// produce yet: a review is shown as the verdict and the assistant's text.
+// The Ask AI panel beside the editor (AI04–AI08, AI10–AI12), with a review's
+// findings marked in the editor (AI05) and quick replies to a question (AI14).
 import { ArrowUp, Sparkles, X } from "lucide-react";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { activeProvider, ask, chooseProvider, clearThread, isAsking, loadProviders, sendsSchema, setPanelWidth, stopAsking, togglePanel, updateTurn, usable, useAi, type Scope, type Turn } from "../../ai-store";
-import type { Task } from "../../lib/ai";
+import { findings, verdict, type Task } from "../../lib/ai";
 import { typeOf } from "../../lib/types";
 import { msg, t } from "../../i18n";
 import { openDialog, type Conn, type Tab } from "../../store";
 import { Button } from "../dialog";
-import type { EditorHandle } from "../Editor";
+import type { AiMark, EditorHandle } from "../Editor";
 import { locate } from "../Results";
 import { IconButton, Splitter } from "../ui";
 import { Answer } from "./Answer";
@@ -40,6 +39,17 @@ export function ProviderSelect() {
       ))}
     </select>
   );
+}
+
+/** The editor marks for a finished review (AI05), while its statement is unchanged. */
+export function reviewMarks(turn: Turn | undefined): AiMark[] | null {
+  if (!turn || turn.task.kind !== "review" || turn.state !== "done" || !turn.scope) return null;
+  const review = verdict(turn.text);
+  if (!review || review === "ok") return null;
+  const scope = turn.scope;
+  const list = findings(turn.text.replace(/^\s*verdict:[^\n]*\n?/i, "")).findings;
+  const marks = list.filter((f) => f.line !== null).map((f) => ({ line: scope.fromLine + f.line! - 1, severity: f.severity, token: f.token, message: f.text }));
+  return marks.length ? marks : null;
 }
 
 export function AskPanel({ tab, conn, editor }: { tab: Tab; conn: Conn | null; editor: RefObject<EditorHandle | null> }) {
@@ -79,7 +89,8 @@ export function AskPanel({ tab, conn, editor }: { tab: Tab; conn: Conn | null; e
     body.current?.scrollTo({ top: body.current.scrollHeight });
   }, [turns.length, turns[turns.length - 1]?.text.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const send = (request: string, task: Task) => {
+  /** `followUp` sends the earlier turns too, for an answer that refers to them. */
+  const send = (request: string, task: Task, followUp = false) => {
     const current = readScope();
     if (busy || !provider) return;
     if (!current && task.kind !== "ask") return;
@@ -91,6 +102,7 @@ export function AskPanel({ tab, conn, editor }: { tab: Tab; conn: Conn | null; e
       engine: conn ? typeOf(conn.engine, conn.driver.id).name : undefined,
       namespace: conn?.namespace ?? undefined,
       production,
+      conversation: followUp,
     });
   };
 
@@ -118,6 +130,9 @@ export function AskPanel({ tab, conn, editor }: { tab: Tab; conn: Conn | null; e
         updateTurn(tab.id, turn.id, { applied: null });
       },
       retry: () => send(turn.request, turn.task),
+      goToLine: intact ? (line: number) => handle!.flashLine(line) : undefined,
+      suggestFix: () => send(t("Suggest a fix"), { kind: "ask", question: "Give the corrected statement for the problems you found, as the suggested query." }, true),
+      reply: busy ? undefined : (text: string) => send(text, { kind: "ask", question: text }, true),
     };
   };
 

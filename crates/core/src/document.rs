@@ -94,6 +94,11 @@ pub struct FindRequest {
     /// Documents per page. Read as at least 1 and at most [`MAX_PAGE`], so a
     /// mistyped limit cannot load a whole collection into memory.
     pub limit: u32,
+    /// An aggregation pipeline (a list of stages) run in place of the filter,
+    /// projection and sort. Only engines that have pipelines take it; the
+    /// others refuse a request that carries one.
+    #[serde(default)]
+    pub pipeline: Option<String>,
 }
 
 /// The largest page [`DocumentStore::find`] returns.
@@ -191,11 +196,13 @@ pub enum TextPart {
     Document,
     Update,
     Command,
+    Pipeline,
 }
 
 impl TextPart {
     /// The `code` of the error for this part: `invalid_filter`, `invalid_projection`,
-    /// `invalid_sort`, `invalid_document`, `invalid_update`, `invalid_command`.
+    /// `invalid_sort`, `invalid_document`, `invalid_update`, `invalid_command`,
+    /// `invalid_pipeline`.
     pub fn code(self) -> &'static str {
         match self {
             Self::Filter => "invalid_filter",
@@ -204,6 +211,7 @@ impl TextPart {
             Self::Document => "invalid_document",
             Self::Update => "invalid_update",
             Self::Command => "invalid_command",
+            Self::Pipeline => "invalid_pipeline",
         }
     }
 }

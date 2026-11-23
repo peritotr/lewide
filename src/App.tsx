@@ -18,7 +18,7 @@ import { DocumentView } from "./components/DocumentView";
 import { GraphView } from "./components/GraphView";
 import { VectorView } from "./components/VectorView";
 import { TableView } from "./components/TableView";
-import { AskPanel } from "./components/ai/AskPanel";
+import { AskPanel, reviewMarks } from "./components/ai/AskPanel";
 import { ChatView } from "./components/ai/ChatView";
 import { SentDialog } from "./components/ai/SentDialog";
 import { usePrefs } from "./prefs";
@@ -84,6 +84,9 @@ function Workspace({ tab, conn }: { tab: Tab; conn: Conn | null }) {
   );
 
   const aiOpen = useAi((s) => !!s.open[tab.id]);
+  // AI05: the last review's findings, marked in the editor while the panel is open.
+  const lastTurn = useAi((s) => s.threads[tab.id]?.slice(-1)[0]);
+  const aiMarks = useMemo(() => (aiOpen ? reviewMarks(lastTurn) : null), [aiOpen, lastTurn]);
   const execute = (items: RunItem[]) => {
     if (items.length === 0) return;
     lastRun.current = items;
@@ -148,7 +151,7 @@ function Workspace({ tab, conn }: { tab: Tab; conn: Conn | null }) {
       <div title={production ? t("Production connection") : undefined} className={production ? "production-band" : ""} />
       <Toolbar tab={tab} conn={conn} onRun={runAtCaret} onRunSelection={runSelection} onExplain={language.kind === "sql" ? runExplain : undefined} onFormat={formatText} />
       <div className="flex min-h-0 min-w-0">
-      <div className="grid min-h-0 min-w-0 flex-1" style={{ gridTemplateRows: `auto minmax(0,1fr) ${resultsHeight}px` }}>
+      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)]" style={{ gridTemplateRows: `auto minmax(0,1fr) ${resultsHeight}px` }}>
       {conn === null ? (
         <div className="mx-s3 mt-s2 flex items-center gap-s2 border border-line px-s3 py-s2 text-[12.5px]">
           <Info size={14} className="flex-none text-text-2" />
@@ -174,6 +177,7 @@ function Workspace({ tab, conn }: { tab: Tab; conn: Conn | null }) {
         schema={schema}
         initialText={tab.sql}
         error={errorMark}
+        aiMarks={aiMarks}
         handle={editor}
         onChange={(sql) => editSql(tab.id, sql)}
         onCaret={(line, col) => updateTab(tab.id, { caret: { line, col } })}

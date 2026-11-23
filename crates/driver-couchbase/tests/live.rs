@@ -71,6 +71,7 @@ fn find(filter: Option<&str>, sort: Option<&str>, skip: u64, limit: u32) -> Find
         sort: sort.map(str::to_owned),
         skip,
         limit,
+        pipeline: None,
     }
 }
 

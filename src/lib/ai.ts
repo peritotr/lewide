@@ -188,3 +188,66 @@ export function verdict(reply: string): "ok" | "warnings" | "errors" | null {
   const match = /^\s*verdict:\s*(ok|warnings|errors)\b/i.exec(reply);
   return match ? (match[1].toLowerCase() as "ok" | "warnings" | "errors") : null;
 }
+
+export type Severity = "error" | "warning" | "note";
+
+/** One finding of a review (AI05): `- ERROR line 3: …` in the reply. */
+export interface Finding {
+  severity: Severity;
+  /** 1-based line within the statement that was sent; null when the finding names none. */
+  line: number | null;
+  text: string;
+  /** The first `identifier` the finding names, to be marked in the editor. */
+  token: string | null;
+}
+
+const FINDING = /^\s*[-*•]\s*\**(error|warning|note)\b\**\s*(?:\(?\s*line\s+(\d+)\s*\)?)?\s*[:—–-]\s*(.+)$/i;
+const RANK: Record<Severity, number> = { error: 0, warning: 1, note: 2 };
+
+/**
+ * A review's findings, most severe first, and the reply without those lines.
+ * A reply that lists none keeps all its text.
+ */
+export function findings(reply: string): { findings: Finding[]; rest: string } {
+  const found: Finding[] = [];
+  const kept: string[] = [];
+  for (const line of reply.split("\n")) {
+    const match = FINDING.exec(line);
+    if (!match) {
+      kept.push(line);
+      continue;
+    }
+    const text = match[3].trim();
+    found.push({ severity: match[1].toLowerCase() as Severity, line: match[2] ? Number(match[2]) : null, text, token: /`([^`\n]+)`/.exec(text)?.[1] ?? null });
+  }
+  found.sort((a, b) => RANK[a.severity] - RANK[b.severity]);
+  return { findings: found, rest: found.length ? kept.join("\n").replace(/\n{3,}/g, "\n\n").trim() : reply };
+}
+
+/** A clarifying question with quick replies (AI14): `Question:` and `- Option: value — gloss` lines. */
+export interface Clarification {
+  question: string;
+  options: { value: string; gloss: string | null }[];
+  /** The reply without the question and its options. */
+  rest: string;
+}
+
+export function clarification(reply: string): Clarification | null {
+  const lines = reply.split("\n");
+  const at = lines.findIndex((l) => /^\s*\**question:\**\s*\S/i.test(l));
+  if (at < 0) return null;
+  const question = lines[at].replace(/^\s*\**question:\**\s*/i, "").trim();
+  const options: Clarification["options"] = [];
+  const used = new Set([at]);
+  for (let i = at + 1; i < lines.length; i++) {
+    const match = /^\s*[-*•]\s*(?:option:\s*)?(.+?)\s*(?:\s[—–]\s|\s-\s)\s*(.+)$/i.exec(lines[i]) ?? /^\s*[-*•]\s*option:\s*(.+)$/i.exec(lines[i]);
+    if (!match) {
+      if (lines[i].trim() === "" && options.length === 0) continue;
+      if (lines[i].trim() === "") break;
+      break;
+    }
+    used.add(i);
+    options.push({ value: match[1].replace(/^`|`$/g, "").trim(), gloss: match[2]?.trim() ?? null });
+  }
+  return { question, options, rest: lines.filter((_, i) => !used.has(i)).join("\n").trim() };
+}

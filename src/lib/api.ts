@@ -207,7 +207,9 @@ export type ColumnChange =
   | { kind: "drop_index"; name: string }
   | { kind: "add_foreign_key"; name: string; columns: string[]; ref_namespace?: string | null; ref_table: string; ref_columns: string[]; on_delete?: string | null; on_update?: string | null }
   | { kind: "drop_foreign_key"; name: string }
-  | { kind: "drop_trigger"; name: string };
+  | { kind: "drop_trigger"; name: string }
+  /** The whole CREATE TRIGGER text; editing a trigger drops it first. */
+  | { kind: "create_trigger"; name: string; definition: string };
 
 export interface StructureChangeSet {
   namespace?: string;
@@ -289,6 +291,8 @@ export interface FindRequest {
   sort?: string | null;
   skip: number;
   limit: number;
+  /** An aggregation pipeline run in place of filter, projection and sort (MongoDB). */
+  pipeline?: string | null;
 }
 
 export interface FoundDocument {

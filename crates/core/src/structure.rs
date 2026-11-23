@@ -64,6 +64,14 @@ pub enum ColumnChange {
     DropTrigger {
         name: String,
     },
+    /// A trigger as the user wrote it: the whole `CREATE TRIGGER` text, with
+    /// whatever the engine needs beside it (PostgreSQL's trigger function).
+    /// It runs as one request, so the engine's own parser reads the body and
+    /// its semicolons. Editing a trigger is a drop of the old one and this.
+    CreateTrigger {
+        name: String,
+        definition: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -83,7 +91,7 @@ pub struct StructureChangeSet {
 
 /// Whether the engine undoes DDL when a transaction is rolled back.
 pub const fn transactional(dialect: SqlDialect) -> bool {
-    !matches!(dialect, SqlDialect::MySql)
+    !matches!(dialect, SqlDialect::MySql | SqlDialect::ClickHouse)
 }
 
 fn checked(text: &str, what: &str) -> Result<()> {
@@ -128,10 +136,18 @@ pub fn statements(
     table: &str,
     changes: &[ColumnChange],
 ) -> Result<Vec<String>> {
-    if dialect == SqlDialect::ClickHouse {
-        // Its ALTER TABLE works differently (MODIFY COLUMN, data-skipping indexes, mutations).
+    if dialect == SqlDialect::ClickHouse
+        && changes.iter().any(|c| {
+            !matches!(
+                c,
+                ColumnChange::Add { .. } | ColumnChange::Modify { .. } | ColumnChange::Drop { .. }
+            )
+        })
+    {
+        // ClickHouse has no foreign keys or triggers, and its indexes are
+        // data-skipping indexes with a type and granularity of their own.
         return Err(Error::Unsupported(
-            "changing the structure is not built for ClickHouse yet",
+            "ClickHouse changes columns only; its indexes are written as SQL",
         ));
     }
     let (columns, others): (Vec<ColumnChange>, Vec<ColumnChange>) =
@@ -145,7 +161,9 @@ pub fn statements(
     for change in &others {
         if !matches!(
             change,
-            ColumnChange::AddIndex { .. } | ColumnChange::AddForeignKey { .. }
+            ColumnChange::AddIndex { .. }
+                | ColumnChange::AddForeignKey { .. }
+                | ColumnChange::CreateTrigger { .. }
         ) {
             out.push(object_statement(dialect, namespace, table, change)?);
         }
@@ -160,6 +178,12 @@ pub fn statements(
     }
     for change in &others {
         if matches!(change, ColumnChange::AddForeignKey { .. }) {
+            out.push(object_statement(dialect, namespace, table, change)?);
+        }
+    }
+    // Last: a trigger may name the new columns.
+    for change in &others {
+        if matches!(change, ColumnChange::CreateTrigger { .. }) {
             out.push(object_statement(dialect, namespace, table, change)?);
         }
     }
@@ -307,6 +331,17 @@ fn object_statement(
             SqlDialect::DuckDb => return Err(Error::Unsupported("DuckDB has no triggers")),
             _ => format!("DROP TRIGGER {}", in_namespace(dialect, namespace, name)),
         },
+        ColumnChange::CreateTrigger { name, definition } => {
+            named(name, "trigger")?;
+            if dialect == SqlDialect::DuckDb {
+                return Err(Error::Unsupported("DuckDB has no triggers"));
+            }
+            let text = definition.trim().trim_end_matches(';').trim_end();
+            if text.is_empty() {
+                return Err(Error::Query("the trigger has no definition".into()));
+            }
+            text.to_owned()
+        }
         ColumnChange::Add { .. } | ColumnChange::Modify { .. } | ColumnChange::Drop { .. } => {
             unreachable!("column changes are built elsewhere")
         }
@@ -321,12 +356,7 @@ fn column_statements(
 ) -> Result<Vec<String>> {
     match dialect {
         SqlDialect::SqlServer => return sql_server(table, changes),
-        // Its ALTER TABLE works differently again (MODIFY COLUMN, mutations).
-        SqlDialect::ClickHouse => {
-            return Err(Error::Unsupported(
-                "changing columns is not built for ClickHouse yet",
-            ));
-        }
+        SqlDialect::ClickHouse => return clickhouse(table, changes),
         _ => {}
     }
     let quote = |name: &str| dialect.quote_ident(name);
@@ -516,6 +546,134 @@ fn sql_server(table: &str, changes: &[ColumnChange]) -> Result<Vec<String>> {
             out.push(format!(
                 "ALTER TABLE {table} ADD {}",
                 definition(dialect, column)?
+            ));
+        }
+    }
+    Ok(out)
+}
+
+/// A ClickHouse type with the nullability asked for. ClickHouse keeps NULL in
+/// the type (`Nullable(String)`, `LowCardinality(Nullable(String))`), so the
+/// switch in the form wraps or unwraps it rather than adding `NOT NULL`.
+fn clickhouse_type(type_name: &str, nullable: bool) -> String {
+    let ty = type_name.trim();
+    let inner = |text: &str, prefix: &str| {
+        text.strip_prefix(prefix)
+            .and_then(|rest| rest.strip_suffix(')'))
+            .map(str::to_owned)
+    };
+    if let Some(low) = inner(ty, "LowCardinality(") {
+        let base = inner(&low, "Nullable(").unwrap_or(low);
+        return if nullable {
+            format!("LowCardinality(Nullable({base}))")
+        } else {
+            format!("LowCardinality({base})")
+        };
+    }
+    let base = inner(ty, "Nullable(").unwrap_or_else(|| ty.to_owned());
+    if nullable {
+        format!("Nullable({base})")
+    } else {
+        base
+    }
+}
+
+/// A ClickHouse default: `DEFAULT expr`, or the kind as the catalog shows it
+/// (`MATERIALIZED expr`, `ALIAS expr`, `EPHEMERAL expr`).
+fn clickhouse_default(default: &str) -> Result<String> {
+    checked(default, "a default")?;
+    let text = default.trim();
+    let kind = text
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    Ok(
+        if matches!(
+            kind.as_str(),
+            "DEFAULT" | "MATERIALIZED" | "ALIAS" | "EPHEMERAL"
+        ) {
+            text.to_owned()
+        } else {
+            format!("DEFAULT {text}")
+        },
+    )
+}
+
+/// ClickHouse: `MODIFY COLUMN` for types and defaults, `REMOVE DEFAULT`,
+/// `RENAME COLUMN`. A changed type rewrites the column's data on the server.
+fn clickhouse(table: &str, changes: &[ColumnChange]) -> Result<Vec<String>> {
+    let dialect = SqlDialect::ClickHouse;
+    let quote = |name: &str| dialect.quote_ident(name);
+    let default_of = |column: &ColumnDef| {
+        column
+            .default_value
+            .as_deref()
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+            .map(str::to_owned)
+    };
+    let define = |column: &ColumnDef| -> Result<String> {
+        checked(&column.type_name, "a column type")?;
+        let mut text = format!(
+            "{} {}",
+            quote(&column.name),
+            clickhouse_type(&column.type_name, column.nullable)
+        );
+        if let Some(default) = default_of(column) {
+            text.push(' ');
+            text.push_str(&clickhouse_default(&default)?);
+        }
+        Ok(text)
+    };
+    let mut out = Vec::new();
+    for change in changes {
+        if let ColumnChange::Drop { column } = change {
+            out.push(format!("ALTER TABLE {table} DROP COLUMN {}", quote(column)));
+        }
+    }
+    for change in changes {
+        let ColumnChange::Modify { from, to } = change else {
+            continue;
+        };
+        checked(&to.name, "a column name")?;
+        if from.name != to.name {
+            out.push(format!(
+                "ALTER TABLE {table} RENAME COLUMN {} TO {}",
+                quote(&from.name),
+                quote(&to.name)
+            ));
+        }
+        let name = quote(&to.name);
+        let before = clickhouse_type(&from.type_name, from.nullable);
+        let after = clickhouse_type(&to.type_name, to.nullable);
+        let retyped = before != after;
+        match (default_of(from) != default_of(to), default_of(to)) {
+            // One statement: a type given alone would keep the old default.
+            (true, Some(_)) => {
+                out.push(format!("ALTER TABLE {table} MODIFY COLUMN {}", define(to)?))
+            }
+            (true, None) => {
+                out.push(format!(
+                    "ALTER TABLE {table} MODIFY COLUMN {name} REMOVE DEFAULT"
+                ));
+                if retyped {
+                    checked(&to.type_name, "a column type")?;
+                    out.push(format!("ALTER TABLE {table} MODIFY COLUMN {name} {after}"));
+                }
+            }
+            (false, _) if retyped => {
+                checked(&to.type_name, "a column type")?;
+                out.push(format!("ALTER TABLE {table} MODIFY COLUMN {name} {after}"));
+            }
+            (false, _) => {}
+        }
+    }
+    for change in changes {
+        if let ColumnChange::Add { column } = change {
+            out.push(format!(
+                "ALTER TABLE {table} ADD COLUMN {}",
+                define(column)?
             ));
         }
     }
@@ -742,6 +900,51 @@ mod tests {
     }
 
     #[test]
+    fn a_trigger_is_replaced_by_dropping_it_first() {
+        let body = "CREATE TRIGGER audit AFTER UPDATE ON orders FOR EACH ROW BEGIN\n  INSERT INTO log VALUES (NEW.id);\nEND;";
+        let out = statements(
+            SqlDialect::Sqlite,
+            None,
+            "\"orders\"",
+            &[
+                ColumnChange::CreateTrigger {
+                    name: "audit".into(),
+                    definition: format!("  {body}  "),
+                },
+                ColumnChange::Add {
+                    column: column("note", "TEXT", true, None),
+                },
+                ColumnChange::DropTrigger {
+                    name: "audit".into(),
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            [
+                "DROP TRIGGER \"audit\"",
+                "ALTER TABLE \"orders\" ADD COLUMN \"note\" TEXT",
+                // The body keeps its own semicolons; only the closing one goes.
+                "CREATE TRIGGER audit AFTER UPDATE ON orders FOR EACH ROW BEGIN\n  INSERT INTO log VALUES (NEW.id);\nEND",
+            ]
+        );
+        let empty = ColumnChange::CreateTrigger {
+            name: "t".into(),
+            definition: " ; ".into(),
+        };
+        assert!(statements(SqlDialect::Postgres, None, "t", &[empty]).is_err());
+        let duck = ColumnChange::CreateTrigger {
+            name: "t".into(),
+            definition: "CREATE TRIGGER t".into(),
+        };
+        assert!(matches!(
+            statements(SqlDialect::DuckDb, None, "t", &[duck]),
+            Err(Error::Unsupported(_))
+        ));
+    }
+
+    #[test]
     fn sql_server_uses_t_sql_forms() {
         let table = "[dbo].[orders]";
         let changes = vec![
@@ -791,6 +994,62 @@ mod tests {
                 && out[0].contains("ALTER TABLE [dbo].[o''k] DROP CONSTRAINT")
         );
         assert_eq!(out[1], "ALTER TABLE [dbo].[o'k] ADD DEFAULT 1 FOR [n]");
+    }
+
+    #[test]
+    fn clickhouse_keeps_null_in_the_type() {
+        assert_eq!(clickhouse_type("String", true), "Nullable(String)");
+        assert_eq!(clickhouse_type("Nullable(String)", false), "String");
+        assert_eq!(
+            clickhouse_type("Nullable(String)", true),
+            "Nullable(String)"
+        );
+        assert_eq!(
+            clickhouse_type("LowCardinality(String)", true),
+            "LowCardinality(Nullable(String))"
+        );
+        assert_eq!(
+            clickhouse_type("LowCardinality(Nullable(String))", false),
+            "LowCardinality(String)"
+        );
+        let table = "`shop`.`orders`";
+        let out = sql(
+            SqlDialect::ClickHouse,
+            table,
+            vec![
+                ColumnChange::Add {
+                    column: column("qty", "UInt32", false, Some("1")),
+                },
+                ColumnChange::Modify {
+                    from: column("note", "Nullable(String)", true, None),
+                    to: column("remark", "Nullable(String)", false, None),
+                },
+                ColumnChange::Modify {
+                    from: column("total", "Float64", false, Some("0")),
+                    to: column("total", "Decimal(18, 2)", false, None),
+                },
+                ColumnChange::Modify {
+                    from: column("city", "String", false, None),
+                    to: column("city", "String", false, Some("MATERIALIZED lower(name)")),
+                },
+                ColumnChange::Drop {
+                    column: "old".into(),
+                },
+            ],
+        );
+        assert_eq!(
+            out,
+            [
+                "ALTER TABLE `shop`.`orders` DROP COLUMN `old`",
+                "ALTER TABLE `shop`.`orders` RENAME COLUMN `note` TO `remark`",
+                "ALTER TABLE `shop`.`orders` MODIFY COLUMN `remark` String",
+                "ALTER TABLE `shop`.`orders` MODIFY COLUMN `total` REMOVE DEFAULT",
+                "ALTER TABLE `shop`.`orders` MODIFY COLUMN `total` Decimal(18, 2)",
+                "ALTER TABLE `shop`.`orders` MODIFY COLUMN `city` String MATERIALIZED lower(name)",
+                "ALTER TABLE `shop`.`orders` ADD COLUMN `qty` UInt32 DEFAULT 1",
+            ]
+        );
+        assert!(!transactional(SqlDialect::ClickHouse));
     }
 
     #[test]

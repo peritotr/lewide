@@ -1,8 +1,8 @@
 // The structure of a table or view (S01, S03–S06, S08–S10). Columns can be
 // added, changed and dropped (S02); indexes and foreign keys added and dropped;
-// triggers dropped. Every change stays pending until its statements are
-// reviewed and applied (S07). The index and key forms are not drawn in the
-// design. Reordering columns and editing a trigger's body are not built.
+// triggers created, edited and dropped. Every change stays pending until its
+// statements are reviewed and applied (S07). The index, key and trigger forms
+// are not drawn in the design. Reordering columns is not built.
 import { ArrowUpRight, Check, KeyRound, Lock, Minus, Pencil, Plus, Trash2, TriangleAlert, Undo2, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, errorMessage, type ColumnChange, type ColumnDef, type ColumnDescription, type ForeignKey, type TableStructure } from "../lib/api";
@@ -20,6 +20,7 @@ import { openDialog,
   type Tab,
   type TableView as View,
 } from "../store";
+import { dialectOf, quoteIdent } from "../lib/sql";
 import { Button, Checkbox, Dialog, Field, linkButton, Strip, TextInput } from "./dialog";
 import { errorText, Spinner } from "./Results";
 import { Loading, LoadError, qualifiedName } from "./TableView";
@@ -59,7 +60,8 @@ const Cell = ({ children, className = "", title }: { children: ReactNode; classN
 );
 
 export function StructureView({ tab, view, conn, isView }: { tab: Tab; view: View; conn: Conn | null; isView: boolean }) {
-  const noAlter = conn?.driver.id === "clickhouse";
+  // ClickHouse changes columns only: no foreign keys or triggers, and its data-skipping indexes are written as SQL.
+  const columnsOnly = conn?.driver.id === "clickhouse";
   const state = view.structure;
   const data = state?.state === "ready" ? state.data : null;
   const tabs: { id: StructureTab; label: string; count: number | null; add?: string }[] = isView
@@ -71,13 +73,15 @@ export function StructureView({ tab, view, conn, isView }: { tab: Tab; view: Vie
         { id: "columns", label: t("Columns"), count: data?.columns.length ?? null, add: t("Add column") },
         { id: "indexes", label: t("Indexes"), count: data?.indexes.length ?? null, add: t("Add index") },
         { id: "foreign_keys", label: t("Foreign keys"), count: data?.foreign_keys.length ?? null, add: t("Add foreign key") },
-        { id: "triggers", label: t("Triggers"), count: data?.triggers.length ?? null },
+        { id: "triggers", label: t("Triggers"), count: data?.triggers.length ?? null, add: t("Add trigger") },
         { id: "ddl", label: "DDL", count: null },
       ];
   const current = tabs.find((x) => x.id === view.subTab) ?? tabs[0];
   // Set when "Add column" is pressed: the Columns list opens a new row for it.
   const [adding, setAdding] = useState<number | null>(null);
   const [form, setForm] = useState<"index" | "foreign_key" | null>(null);
+  // The trigger being written: a new one, or an existing one by name.
+  const [triggerForm, setTriggerForm] = useState<{ name: string | null } | null>(null);
   const driver = conn?.driver.id ?? "postgres";
   // SQLite and DuckDB declare foreign keys only when a table is created.
   const noKeys = driver === "sqlite" || driver === "duckdb";
@@ -105,10 +109,10 @@ export function StructureView({ tab, view, conn, isView }: { tab: Tab; view: Vie
         {current.add && (
           <button
             type="button"
-            disabled={!data || isView || noAlter || view.structureApply.state === "running" || (current.id === "foreign_keys" && noKeys)}
-            title={noAlter ? t("Changing columns is not built for {engine} yet.", { engine: conn?.driver.name ?? "" }) : current.id === "foreign_keys" && noKeys ? t("{engine} adds a foreign key only when the table is created.", { engine: conn?.driver.name ?? "" }) : undefined}
+            disabled={!data || isView || (columnsOnly && current.id !== "columns") || view.structureApply.state === "running" || (current.id === "foreign_keys" && noKeys) || (current.id === "triggers" && driver === "duckdb")}
+            title={columnsOnly && current.id === "triggers" ? t("{engine} has no triggers.", { engine: conn?.driver.name ?? "" }) : columnsOnly && current.id !== "columns" ? t("{engine} indexes are added with SQL in a query tab.", { engine: conn?.driver.name ?? "" }) : current.id === "triggers" && driver === "duckdb" ? t("{engine} has no triggers.", { engine: conn?.driver.name ?? "" }) : current.id === "foreign_keys" && noKeys ? t("{engine} adds a foreign key only when the table is created.", { engine: conn?.driver.name ?? "" }) : undefined}
             className="ml-auto flex items-center gap-[5px] text-[12.5px] text-accent-text hover:underline disabled:cursor-not-allowed disabled:no-underline disabled:opacity-45"
-            onClick={() => (current.id === "columns" ? setAdding(Date.now()) : setForm(current.id === "indexes" ? "index" : "foreign_key"))}
+            onClick={() => (current.id === "columns" ? setAdding(Date.now()) : current.id === "triggers" ? setTriggerForm({ name: null }) : setForm(current.id === "indexes" ? "index" : "foreign_key"))}
           >
             <Plus size={13} />
             {current.add}
@@ -124,9 +128,9 @@ export function StructureView({ tab, view, conn, isView }: { tab: Tab; view: Vie
         <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]">
         <div className="min-h-0 overflow-auto">
           {current.id === "columns" && <Columns tab={tab} view={view} data={state.data} isView={isView} driver={conn?.driver.id ?? "postgres"} adding={adding} onAdded={() => setAdding(null)} />}
-          {current.id === "indexes" && <Indexes tab={tab} view={view} data={state.data} editable={!noAlter} />}
-          {current.id === "foreign_keys" && <ForeignKeys tab={tab} data={state.data} view={view} conn={conn} editable={!noAlter && !noKeys} />}
-          {current.id === "triggers" && <Triggers tab={tab} view={view} data={state.data} editable={!noAlter && driver !== "duckdb"} />}
+          {current.id === "indexes" && <Indexes tab={tab} view={view} data={state.data} editable={!columnsOnly} />}
+          {current.id === "foreign_keys" && <ForeignKeys tab={tab} data={state.data} view={view} conn={conn} editable={!columnsOnly && !noKeys} />}
+          {current.id === "triggers" && <Triggers tab={tab} view={view} data={state.data} editable={!columnsOnly && driver !== "duckdb"} onEdit={(name) => setTriggerForm({ name })} />}
           {current.id === "ddl" && <Ddl data={state.data} conn={conn} isView={isView} />}
         </div>
         {current.id !== "ddl" && <StructureBar tab={tab} view={view} />}
@@ -134,6 +138,7 @@ export function StructureView({ tab, view, conn, isView }: { tab: Tab; view: Vie
       )}
       {form === "index" && data && <IndexForm view={view} data={data} pending={view.columnEdits} onAdd={addEdit} onClose={() => setForm(null)} />}
       {form === "foreign_key" && data && conn && <ForeignKeyForm view={view} conn={conn} data={data} onAdd={addEdit} onClose={() => setForm(null)} />}
+      {triggerForm && data && <TriggerForm tab={tab} view={view} data={data} driver={driver} editing={triggerForm.name} onClose={() => setTriggerForm(null)} />}
     </div>
   );
 }
@@ -363,6 +368,8 @@ const TYPES: Record<string, string[]> = {
   postgres: ["integer", "bigint", "smallint", "numeric(10,2)", "boolean", "text", "varchar(255)", "uuid", "date", "timestamptz", "timestamp", "jsonb", "bytea", "double precision"],
   mysql: ["int", "bigint", "smallint", "decimal(10,2)", "tinyint(1)", "varchar(255)", "text", "date", "datetime", "timestamp", "json", "blob", "double"],
   sqlite: ["INTEGER", "REAL", "TEXT", "BLOB", "NUMERIC"],
+  // Nullability is the switch beside the type, so Nullable(…) is left out here.
+  clickhouse: ["UInt32", "UInt64", "Int32", "Int64", "Float64", "Decimal(18, 2)", "String", "LowCardinality(String)", "Bool", "Date", "DateTime", "DateTime64(3)", "UUID", "Array(String)"],
 };
 
 const blank = (): ColumnDef => ({ name: "", type_name: "", nullable: true, default_value: null });
@@ -374,8 +381,7 @@ function Columns({ tab, view, data, isView, driver, adding, onAdded }: { tab: Ta
   // The row being edited: an existing column by name, or an added one by its id.
   const [editing, setEditing] = useState<{ key: string; draft: ColumnDef } | null>(null);
   const [nextId, setNextId] = useState(1);
-  // T-SQL changes columns differently (sp_rename, named default constraints); agreed to come later.
-  const locked = isView || driver === "clickhouse" || view.structureApply.state === "running";
+  const locked = isView || view.structureApply.state === "running";
 
   useEffect(() => {
     if (adding === null) return;
@@ -589,7 +595,16 @@ function StructureBar({ tab, view }: { tab: Tab; view: View }) {
   const edits = view.columnEdits;
   const apply = view.structureApply;
   const ghost = "flex h-[26px] flex-none items-center gap-[6px] px-s2 text-[12.5px] whitespace-nowrap enabled:hover:bg-hover disabled:cursor-not-allowed disabled:opacity-45";
-  const count = (kind: "add" | "modify" | "drop") => edits.filter((e) => (kind === "add" ? e.kind.startsWith("add") : kind === "drop" ? e.kind.startsWith("drop") : e.kind === kind)).length;
+  // An edited trigger is a drop and a create of the same name: it counts as one change.
+  const replacedTrigger = (e: ColumnChange) => (e.kind === "create_trigger" || e.kind === "drop_trigger") && edits.some((o) => o !== e && (o.kind === "create_trigger" || o.kind === "drop_trigger") && o.name === e.name);
+  const count = (kind: "add" | "modify" | "drop") =>
+    edits.filter((e) =>
+      kind === "add"
+        ? e.kind.startsWith("add") || (e.kind === "create_trigger" && !replacedTrigger(e))
+        : kind === "drop"
+          ? e.kind.startsWith("drop") && !replacedTrigger(e)
+          : e.kind === kind || (e.kind === "create_trigger" && replacedTrigger(e)),
+    ).length;
 
   useEffect(() => {
     if (apply.state !== "ok") return;
@@ -642,7 +657,7 @@ function StructureBar({ tab, view }: { tab: Tab; view: View }) {
   const running = apply.state === "running";
   return (
     <div role="status" className="flex h-[36px] items-center gap-s3 border-t border-line bg-accent-tint px-[10.2px] text-[12.5px] whitespace-nowrap">
-      <span className="font-medium">{tn(edits.length, "{count} structure change", "{count} structure changes")}</span>
+      <span className="font-medium">{tn(count("add") + count("modify") + count("drop"), "{count} structure change", "{count} structure changes")}</span>
       <span className="flex gap-s3 font-mono text-[12px]">
         {count("add") > 0 && <span className="text-ok">+ {t("{count} added", { count: count("add") })}</span>}
         {count("modify") > 0 && <span className="text-accent-text">~ {t("{count} modified", { count: count("modify") })}</span>}
@@ -670,14 +685,14 @@ export function AlterDialog({ tab, view, conn, statements }: { tab: Tab; view: V
   const [typed, setTyped] = useState("");
   const edits = view.columnEdits;
   const dataLoss = edits.some((e) => e.kind.startsWith("drop") || (e.kind === "modify" && e.from.type_name.trim() !== e.to.type_name.trim()));
-  const transactional = conn.driver.id !== "mysql";
+  const transactional = conn.driver.id !== "mysql" && conn.driver.id !== "clickhouse";
   const allowed = !production || typed === conn.name;
   const apply = () => {
     if (!allowed) return;
     openDialog(null);
     void applyStructureChanges(tab.id);
   };
-  const look = (statement: string) => (/\bDROP (COLUMN|INDEX|CONSTRAINT|FOREIGN KEY|TRIGGER)\b/i.test(statement) ? { mark: "−", colour: "text-danger", tint: "bg-danger-tint" } : /\bADD COLUMN\b|^ALTER TABLE \S+ ADD \[|^CREATE (UNIQUE )?INDEX\b|\bADD CONSTRAINT\b/i.test(statement) ? { mark: "+", colour: "text-ok", tint: "bg-ok-tint" } : { mark: "~", colour: "text-accent-text", tint: "bg-accent-tint" });
+  const look = (statement: string) => (/\bDROP (COLUMN|INDEX|CONSTRAINT|FOREIGN KEY|TRIGGER)\b/i.test(statement) ? { mark: "−", colour: "text-danger", tint: "bg-danger-tint" } : /\bADD COLUMN\b|^ALTER TABLE \S+ ADD \[|^CREATE (UNIQUE )?INDEX\b|\bADD CONSTRAINT\b|^CREATE (OR REPLACE )?(TRIGGER|FUNCTION)\b/i.test(statement) ? { mark: "+", colour: "text-ok", tint: "bg-ok-tint" } : { mark: "~", colour: "text-accent-text", tint: "bg-accent-tint" });
   return (
     <Dialog
       alert={production || dataLoss}
@@ -890,13 +905,33 @@ function ForeignKeys({ tab, data, view, conn, editable }: { tab: Tab; data: Tabl
   );
 }
 
-function Triggers({ tab, view, data, editable }: { tab: Tab; view: View; data: TableStructure; editable: boolean }) {
-  if (data.triggers.length === 0) return <Nothing>{t("This table has no triggers.")}</Nothing>;
+function Triggers({ tab, view, data, editable, onEdit }: { tab: Tab; view: View; data: TableStructure; editable: boolean; onEdit(name: string): void }) {
+  const created = view.columnEdits.filter((e): e is Extract<ColumnChange, { kind: "create_trigger" }> => e.kind === "create_trigger");
+  const fresh = created.filter((c) => !data.triggers.some((x) => x.name === c.name));
+  if (data.triggers.length === 0 && fresh.length === 0) return <Nothing>{t("This table has no triggers.")}</Nothing>;
+  const added = "bg-ok-tint";
   return (
-    <List label={t("Triggers")} columns="240px 200px 160px minmax(240px,1fr) 34px" headers={[t("Name"), t("Event"), t("Timing"), t("Definition"), ""]}>
+    <List label={t("Triggers")} columns="240px 200px 160px minmax(240px,1fr) 60px" headers={[t("Name"), t("Event"), t("Timing"), t("Definition"), ""]}>
+      {fresh.map((change) => (
+        <Row key={`new-${change.name}`}>
+          <Cell className={`font-medium ${added}`}>
+            <span className={`selectable ${clip}`}>{change.name}</span>
+          </Cell>
+          <Cell className={added}>{dash}</Cell>
+          <Cell className={added}>{dash}</Cell>
+          <Cell title={change.definition} className={added}>
+            <span className={`selectable ${clip}`}>{change.definition}</span>
+          </Cell>
+          <Cell className={`gap-[2px] px-[4px] ${added}`}>
+            <EditButton label={t("Edit trigger {name}", { name: change.name })} onClick={() => onEdit(change.name)} />
+            <RemoveAdded tab={tab} view={view} change={change} />
+          </Cell>
+        </Row>
+      ))}
       {data.triggers.map((trigger) => {
-        const gone = view.columnEdits.some((e) => e.kind === "drop_trigger" && e.name === trigger.name);
-        const tint = gone ? "bg-danger-tint text-text-3 line-through" : "";
+        const replaced = created.find((c) => c.name === trigger.name);
+        const gone = !replaced && view.columnEdits.some((e) => e.kind === "drop_trigger" && e.name === trigger.name);
+        const tint = gone ? "bg-danger-tint text-text-3 line-through" : replaced ? "bg-accent-tint" : "";
         return (
           <Row key={trigger.name}>
             <Cell className={`font-medium ${tint}`}>
@@ -904,12 +939,146 @@ function Triggers({ tab, view, data, editable }: { tab: Tab; view: View; data: T
             </Cell>
             <Cell className={tint}>{trigger.events.length > 0 ? trigger.events.join(" OR ") : dash}</Cell>
             <Cell className={tint}>{trigger.timing ?? dash}</Cell>
-            <Cell title={trigger.definition ?? undefined} className={tint}>{trigger.definition ? <span className={`selectable ${clip}`}>{trigger.definition}</span> : dash}</Cell>
-            <Cell className={`px-[4px] ${gone ? "bg-danger-tint" : ""}`}>{editable ? <DropToggle tab={tab} view={view} change={{ kind: "drop_trigger", name: trigger.name }} label={t("Drop trigger {name}", { name: trigger.name })} /> : null}</Cell>
+            <Cell title={replaced?.definition ?? trigger.definition ?? undefined} className={tint}>
+              {replaced ? <span className={`selectable ${clip}`}>{replaced.definition}</span> : trigger.definition ? <span className={`selectable ${clip}`}>{trigger.definition}</span> : dash}
+            </Cell>
+            <Cell className={`gap-[2px] px-[4px] ${tint}`}>
+              {editable && !gone && <EditButton label={t("Edit trigger {name}", { name: trigger.name })} onClick={() => onEdit(trigger.name)} />}
+              {editable && replaced && (
+                <button
+                  type="button"
+                  title={t("Keep {name} as it is", { name: trigger.name })}
+                  aria-label={t("Keep {name} as it is", { name: trigger.name })}
+                  className="flex size-[22px] flex-none items-center justify-center text-accent-text hover:bg-hover"
+                  onClick={() => setColumnEdits(tab.id, view.columnEdits.filter((e) => !((e.kind === "create_trigger" || e.kind === "drop_trigger") && e.name === trigger.name)))}
+                >
+                  <Undo2 size={13} />
+                </button>
+              )}
+              {editable && !replaced && <DropToggle tab={tab} view={view} change={{ kind: "drop_trigger", name: trigger.name }} label={t("Drop trigger {name}", { name: trigger.name })} />}
+            </Cell>
           </Row>
         );
       })}
     </List>
+  );
+}
+
+const EditButton = ({ label, onClick }: { label: string; onClick(): void }) => (
+  <button type="button" title={label} aria-label={label} className="flex size-[22px] flex-none items-center justify-center text-text-3 hover:bg-hover hover:text-text" onClick={onClick}>
+    <Pencil size={13} />
+  </button>
+);
+
+/** A starting text for a new trigger, in the engine's own form. */
+function triggerTemplate(driver: string, view: View, name: string): string {
+  const dialect = dialectOf(driver);
+  const q = (n: string) => quoteIdent(n, dialect);
+  const table = view.namespace ? `${q(view.namespace)}.${q(view.name)}` : q(view.name);
+  const inSchema = (n: string) => (view.namespace ? `${q(view.namespace)}.${q(n)}` : q(n));
+  switch (driver) {
+    case "postgres":
+    case "pgvector":
+      return [
+        `CREATE OR REPLACE FUNCTION ${inSchema(`${name}_fn`)}() RETURNS trigger LANGUAGE plpgsql AS $$`,
+        "BEGIN",
+        "  -- NEW is the row being written; OLD is the row before it.",
+        "  RETURN NEW;",
+        "END;",
+        "$$;",
+        `CREATE TRIGGER ${q(name)} BEFORE UPDATE ON ${table}`,
+        `  FOR EACH ROW EXECUTE FUNCTION ${inSchema(`${name}_fn`)}();`,
+      ].join("\n");
+    case "sqlserver":
+      return [`CREATE TRIGGER ${inSchema(name)} ON ${table} AFTER UPDATE AS`, "BEGIN", "  SET NOCOUNT ON;", "  -- inserted and deleted hold the rows the statement changed.", "END"].join("\n");
+    case "sqlite":
+      return [`CREATE TRIGGER ${q(name)} AFTER UPDATE ON ${table} FOR EACH ROW`, "BEGIN", "  -- NEW is the row after the change; OLD is the row before it.", "  SELECT 1;", "END"].join("\n");
+    default:
+      return [`CREATE TRIGGER ${q(name)} BEFORE UPDATE ON ${table} FOR EACH ROW`, "BEGIN", "  -- NEW is the row being written; OLD is the row before it.", "END"].join("\n");
+  }
+}
+
+// Not drawn in the design: a trigger written as SQL, in the pending flow of S02.
+function TriggerForm({ tab, view, data, driver, editing, onClose }: { tab: Tab; view: View; data: TableStructure; driver: string; editing: string | null; onClose(): void }) {
+  const edits = view.columnEdits;
+  const existing = editing ? data.triggers.find((x) => x.name === editing) : undefined;
+  const pending = editing ? edits.find((e): e is Extract<ColumnChange, { kind: "create_trigger" }> => e.kind === "create_trigger" && e.name === editing) : undefined;
+  const initial = (): string => {
+    if (pending) return pending.definition;
+    const definition = existing?.definition?.trim();
+    if (!existing || !definition) return editing ? triggerTemplate(driver, view, editing) : "";
+    if (/^create\b/i.test(definition)) return definition;
+    // MySQL keeps the body alone; the rest comes from the trigger's own fields.
+    const dialect = dialectOf(driver);
+    const table = view.namespace ? `${quoteIdent(view.namespace, dialect)}.${quoteIdent(view.name, dialect)}` : quoteIdent(view.name, dialect);
+    return `CREATE TRIGGER ${quoteIdent(existing.name, dialect)} ${existing.timing ?? "BEFORE"} ${existing.events[0] ?? "UPDATE"} ON ${table} FOR EACH ROW\n${definition}`;
+  };
+  const [name, setName] = useState(editing ?? "");
+  const [text, setText] = useState(initial);
+  const [touched, setTouched] = useState(editing !== null);
+  const finalName = name.trim();
+  const taken = !editing && (data.triggers.some((x) => x.name === finalName) || edits.some((e) => e.kind === "create_trigger" && e.name === finalName));
+  const ready = finalName !== "" && !taken && text.trim() !== "";
+  // A new trigger's text follows its name until the text is changed by hand.
+  const rename = (value: string) => {
+    setName(value);
+    if (!touched) setText(value.trim() ? triggerTemplate(driver, view, value.trim()) : "");
+  };
+  return (
+    <Dialog
+      title={editing ? t("Edit trigger {name}", { name: editing }) : t("Add trigger to {table}", { table: qualifiedName(view) })}
+      width={680}
+      onClose={onClose}
+      onSubmit={() => {
+        if (!ready) return;
+        const others = edits.filter((e) => !((e.kind === "create_trigger" || e.kind === "drop_trigger") && e.name === finalName));
+        const change: ColumnChange = { kind: "create_trigger", name: finalName, definition: text };
+        setColumnEdits(tab.id, existing ? [...others, { kind: "drop_trigger", name: finalName }, change] : [...others, change]);
+        onClose();
+      }}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            {t("Cancel")}
+          </Button>
+          <Button type="submit" variant="primary" disabled={!ready}>
+            {editing ? t("Save trigger") : t("Add trigger")}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-s3">
+        <Field label={t("Name")} error={taken ? t("A trigger of this name exists.") : undefined}>
+          <TextInput mono autoFocus={!editing} disabled={!!editing} value={name} onChange={(e) => rename(e.target.value)} />
+        </Field>
+        <Field
+          label={t("Definition")}
+          helper={
+            existing
+              ? t("Applying drops the trigger and creates it from this text, in one transaction where the engine allows it.")
+              : t("The whole statement that creates the trigger. It runs as you wrote it.")
+          }
+        >
+          <textarea
+            aria-label={t("Definition")}
+            spellCheck={false}
+            className="h-[240px] w-full resize-y border border-line bg-panel p-s2 font-mono text-[12.5px] leading-[19px] focus:border-accent focus:outline-none"
+            value={text}
+            onChange={(e) => {
+              setTouched(true);
+              setText(e.target.value);
+            }}
+            onKeyDown={(e) => {
+              // Enter writes a new line here; ⌘↵ submits.
+              if (e.key === "Enter" && !(e.metaKey || e.ctrlKey)) e.stopPropagation();
+            }}
+          />
+        </Field>
+        {(driver === "postgres" || driver === "pgvector") && existing && (
+          <Strip kind="note">{t("PostgreSQL keeps a trigger's body in its function. To change the body, add CREATE OR REPLACE FUNCTION above the trigger.")}</Strip>
+        )}
+      </div>
+    </Dialog>
   );
 }
 
@@ -920,7 +1089,7 @@ function Ddl({ data, conn, isView }: { data: TableStructure; conn: Conn | null; 
     <div className="flex min-h-full flex-col">
       <Strip kind="neutral" icon={<Lock size={13} />} className="items-center border-x-0 border-t-0">
         <div className="flex items-center gap-s4">
-          <span className="min-w-0 flex-1">{isView || conn?.driver.id === "clickhouse" ? t("Read-only. Generated from the catalog.") : t("Read-only. Generated from the catalog; edit the table in the other tabs.")}</span>
+          <span className="min-w-0 flex-1">{isView ? t("Read-only. Generated from the catalog.") : t("Read-only. Generated from the catalog; edit the table in the other tabs.")}</span>
           <button type="button" className={linkButton} onClick={() => void navigator.clipboard?.writeText(data.ddl!)}>
             {t("Copy")}
           </button>

@@ -1113,18 +1113,19 @@ export async function saveTabQuery(tabId: string, name: string): Promise<string 
   }
 }
 
-/** Opens a saved query in a tab, or brings its tab to the front. */
-/** Opens the key list of a key-value connection, or brings its tab to the front on that database. */
-export function openKeys(connectionId: string, db?: number) {
+/** Opens the key list of a key-value connection, or brings its tab to the front on that database (and pattern). */
+export function openKeys(connectionId: string, db?: number, pattern?: string) {
   const conn = findConn(connectionId);
   const current = Number(/^db(\d+)$/.exec(conn?.namespace ?? "")?.[1] ?? 0);
   const open = get().tabs.find((t) => t.connectionId === connectionId && t.keys);
   if (open) {
     set({ activeTabId: open.id, activeConnectionId: connectionId });
-    if (db !== undefined && open.keys!.db !== db) patchTab(open.id, { keys: { ...open.keys!, db, selected: null } });
+    const keys = open.keys!;
+    const changed = (db !== undefined && keys.db !== db) || (pattern !== undefined && keys.pattern !== pattern);
+    if (changed) patchTab(open.id, { keys: { ...keys, db: db ?? keys.db, pattern: pattern ?? keys.pattern, selected: null } });
     return;
   }
-  const tab = blankTab(connectionId, { kind: "key-value", title: t("Keys"), keys: { db: db ?? current, pattern: "", kind: null, selected: null } });
+  const tab = blankTab(connectionId, { kind: "key-value", title: t("Keys"), keys: { db: db ?? current, pattern: pattern ?? "", kind: null, selected: null } });
   set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tab.id, activeConnectionId: connectionId }));
 }
 

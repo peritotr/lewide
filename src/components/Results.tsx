@@ -79,7 +79,8 @@ export function Results({ tab, conn, onGoTo, onRunAgain }: Props) {
         className="-top-[3px]"
         onDrag={(dy) => useApp.setState((s) => ({ resultsHeight: Math.min(window.innerHeight - 260, Math.max(120, s.resultsHeight - dy)) }))}
       />
-      <div className="flex items-stretch gap-s4 border-b border-line px-s3">
+      {/* In a narrow pane (the Ask AI panel open) the note gives way first; the row never spills. */}
+      <div className="flex min-w-0 items-stretch gap-s4 overflow-hidden border-b border-line px-s3">
         {showSets &&
           withRows.map(({ set, index }, n) => {
             const active = set === current;
@@ -89,7 +90,7 @@ export function Results({ tab, conn, onGoTo, onRunAgain }: Props) {
                 type="button"
                 role="tab"
                 aria-selected={active}
-                className={`flex items-center gap-[6px] whitespace-nowrap ${active ? "font-medium" : "text-text-2"}`}
+                className={`flex flex-none items-center gap-[6px] whitespace-nowrap ${active ? "font-medium" : "text-text-2"}`}
                 style={active ? { boxShadow: "inset 0 -2px 0 var(--accent)" } : undefined}
                 onClick={() => updateTab(tab.id, { activeSet: index })}
               >
@@ -102,13 +103,13 @@ export function Results({ tab, conn, onGoTo, onRunAgain }: Props) {
             );
           })}
         {showSets && current && (
-          <div className="ml-s3 flex items-center gap-[6px] self-center text-[12px] whitespace-nowrap text-text-2">
-            <Lock size={12} />
-            {lost && tab.finishedAt ? t("Results from {time} · connection closed", { time: clock(tab.finishedAt) }) : t("Read-only · query result")}
+          <div className="ml-s3 flex min-w-0 items-center gap-[6px] self-center text-[12px] whitespace-nowrap text-text-2">
+            <Lock size={12} className="flex-none" />
+            <span className="min-w-0 truncate">{lost && tab.finishedAt ? t("Results from {time} · connection closed", { time: clock(tab.finishedAt) }) : t("Read-only · query result")}</span>
           </div>
         )}
 
-        <div role="tablist" className="ml-auto flex self-center border border-line text-[12px] whitespace-nowrap">
+        <div role="tablist" className="ml-auto flex flex-none self-center border border-line text-[12px] whitespace-nowrap">
           {VIEWS.map((view, i) => (
             <button
               key={view.id}
@@ -124,7 +125,7 @@ export function Results({ tab, conn, onGoTo, onRunAgain }: Props) {
             </button>
           ))}
         </div>
-        <div className="flex gap-[2px] self-center">
+        <div className="flex flex-none gap-[2px] self-center">
           <IconButton label={`${t("Filter results")} · ${t(NOT_BUILT)}`} disabled>
             <Filter size={14} />
           </IconButton>

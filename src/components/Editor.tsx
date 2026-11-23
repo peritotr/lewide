@@ -42,6 +42,18 @@ export interface EditorHandle {
   replaceText(text: string): void;
   /** Moves the caret to a 0-based offset, or to the start of a 1-based line. */
   goTo(place: { offset?: number | null; line: number }): void;
+  /** Moves the caret to a 1-based line and tints the line for a moment (AI05). */
+  flashLine(line: number): void;
+}
+
+/** A finding of an AI review on one line (AI05): hollow diamond, dotted underline. */
+export interface AiMark {
+  /** 1-based line in the editor. */
+  line: number;
+  severity: "error" | "warning" | "note";
+  /** The text to underline on that line, when the finding names one. */
+  token: string | null;
+  message: string;
 }
 
 /** Where the last run failed, to be marked in the text. */
@@ -112,6 +124,59 @@ class ErrorDiamond extends GutterMarker {
 }
 const errorDiamond = new ErrorDiamond();
 
+class AiDiamond extends GutterMarker {
+  constructor(readonly severity: AiMark["severity"]) {
+    super();
+  }
+  eq(other: AiDiamond) {
+    return other.severity === this.severity;
+  }
+  toDOM() {
+    const mark = document.createElement("div");
+    mark.className = `cm-ai-diamond cm-ai-${this.severity}`;
+    return mark;
+  }
+}
+const aiDiamonds = { error: new AiDiamond("error"), warning: new AiDiamond("warning"), note: new AiDiamond("note") };
+
+// The findings of the last review. Like the run error, any edit clears them.
+const setAiMarks = StateEffect.define<AiMark[] | null>();
+const aiField = StateField.define<AiMark[] | null>({
+  create: () => null,
+  update(value, tr) {
+    for (const effect of tr.effects) if (effect.is(setAiMarks)) return effect.value;
+    return tr.docChanged ? null : value;
+  },
+});
+const aiDecorations = EditorView.decorations.compute([aiField], (state) => {
+  const marks = state.field(aiField);
+  if (!marks) return Decoration.none;
+  const ranges = [];
+  for (const mark of marks) {
+    if (!mark.token || mark.line < 1 || mark.line > state.doc.lines) continue;
+    const line = state.doc.line(mark.line);
+    const at = line.text.toLowerCase().indexOf(mark.token.toLowerCase());
+    if (at < 0) continue;
+    ranges.push(Decoration.mark({ class: `cm-ai-token cm-ai-${mark.severity}`, attributes: { title: `${t("AI review:")} ${mark.message}` } }).range(line.from + at, line.from + at + mark.token.length));
+  }
+  return Decoration.set(ranges, true);
+});
+
+// A line tinted for a moment after its finding is clicked.
+const setFlash = StateEffect.define<number | null>();
+const flashField = StateField.define<number | null>({
+  create: () => null,
+  update(value, tr) {
+    for (const effect of tr.effects) if (effect.is(setFlash)) return effect.value;
+    return value;
+  },
+});
+const flashDecorations = EditorView.decorations.compute([flashField], (state) => {
+  const line = state.field(flashField);
+  if (line === null || line < 1 || line > state.doc.lines) return Decoration.none;
+  return Decoration.set([Decoration.line({ class: "cm-flash-line" }).range(state.doc.line(line).from)]);
+});
+
 // The error of the last run. Any edit clears it: the positions no longer hold.
 const setError = StateEffect.define<ErrorMark | null>();
 const errorField = StateField.define<ErrorMark | null>({
@@ -141,6 +206,8 @@ interface Props {
   schema: Record<string, string[]>;
   initialText: string;
   error: ErrorMark | null;
+  /** Findings of the last AI review, while its panel is open. */
+  aiMarks?: AiMark[] | null;
   handle: RefObject<EditorHandle | null>;
   onChange(text: string): void;
   onCaret(line: number, col: number): void;
@@ -172,6 +239,10 @@ export function Editor(props: Props) {
   }, [props.error]);
 
   useEffect(() => {
+    view.current?.dispatch({ effects: setAiMarks.of(props.aiMarks ?? null) });
+  }, [props.aiMarks]);
+
+  useEffect(() => {
     const { language: lang, initialText, handle } = latest.current;
     // Settings › Editor, read when the editor is made.
     const prefs = usePrefs.getState();
@@ -193,10 +264,21 @@ export function Editor(props: Props) {
         extensions: [
           errorField,
           errorDecorations,
+          aiField,
+          aiDecorations,
+          flashField,
+          flashDecorations,
           gutter({
             class: "cm-error-gutter",
-            lineMarker: (view, line) => (view.state.field(errorField)?.line === view.state.doc.lineAt(line.from).number ? errorDiamond : null),
-            lineMarkerChange: (update) => update.startState.field(errorField) !== update.state.field(errorField),
+            lineMarker(view, line) {
+              const number = view.state.doc.lineAt(line.from).number;
+              if (view.state.field(errorField)?.line === number) return errorDiamond;
+              // The most severe finding of the line, when it has several.
+              const found = view.state.field(aiField)?.filter((m) => m.line === number) ?? [];
+              const worst = found.find((m) => m.severity === "error") ?? found.find((m) => m.severity === "warning") ?? found[0];
+              return worst ? aiDiamonds[worst.severity] : null;
+            },
+            lineMarkerChange: (update) => update.startState.field(errorField) !== update.state.field(errorField) || update.startState.field(aiField) !== update.state.field(aiField),
           }),
           lineNumbers(),
           statement,
@@ -260,7 +342,8 @@ export function Editor(props: Props) {
     });
 
     view.current = editor;
-    editor.dispatch({ effects: setError.of(latest.current.error) });
+    editor.dispatch({ effects: [setError.of(latest.current.error), setAiMarks.of(latest.current.aiMarks ?? null)] });
+    let flashTimer = 0;
     handle.current = {
       statementAtCaret: () => editor.state.field(statement),
       selectedStatements() {
@@ -277,9 +360,17 @@ export function Editor(props: Props) {
         editor.dispatch({ selection: { anchor }, scrollIntoView: true });
         editor.focus();
       },
+      flashLine(number) {
+        const line = editor.state.doc.line(Math.min(Math.max(1, number), editor.state.doc.lines));
+        editor.dispatch({ selection: { anchor: line.from }, scrollIntoView: true, effects: setFlash.of(line.number) });
+        editor.focus();
+        window.clearTimeout(flashTimer);
+        flashTimer = window.setTimeout(() => editor.dispatch({ effects: setFlash.of(null) }), 200);
+      },
     };
     editor.focus();
     return () => {
+      window.clearTimeout(flashTimer);
       handle.current = null;
       view.current = null;
       editor.destroy();

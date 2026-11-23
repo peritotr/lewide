@@ -406,6 +406,13 @@ impl DocumentStore for SearchConnection {
 
     async fn find(&self, request: FindRequest) -> Result<FindPage> {
         let started = Instant::now();
+        if request
+            .pipeline
+            .as_deref()
+            .is_some_and(|p| !p.trim().is_empty())
+        {
+            return Err(Error::Unsupported("aggregation pipelines on Elasticsearch"));
+        }
         self.check_database(&request.database)?;
         let limit = request.limit.clamp(1, MAX_PAGE) as u64;
         if request.skip + limit > RESULT_WINDOW {

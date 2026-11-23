@@ -1140,3 +1140,62 @@ async fn adds_and_drops_indexes_keys_and_triggers() {
     assert!(structure.foreign_keys.is_empty());
     assert!(structure.triggers.is_empty());
 }
+
+#[tokio::test]
+async fn creates_and_replaces_a_trigger_with_a_compound_body() {
+    use dbclient_core::structure::{ColumnChange, apply_on, statements};
+    let conn = connect_or_skip!();
+    conn.execute_all(query(
+        "DROP TABLE IF EXISTS trig_items;
+         CREATE TABLE trig_items (id int PRIMARY KEY, name varchar(20), touched int DEFAULT 0)",
+        None,
+    ))
+    .await
+    .unwrap();
+    let create = |bump: i32| ColumnChange::CreateTrigger {
+        name: "trig_items_touch".into(),
+        definition: format!(
+            "CREATE TRIGGER trig_items_touch BEFORE UPDATE ON trig_items FOR EACH ROW\n\
+             BEGIN\n  SET NEW.touched = OLD.touched + {bump};\n  SET NEW.name = UPPER(NEW.name);\nEND;"
+        ),
+    };
+    let table = conn.qualified(None, "trig_items");
+    let run = |changes: Vec<ColumnChange>| {
+        let sql = statements(conn.dialect(), None, &table, &changes).unwrap();
+        apply_on(conn.as_ref(), sql)
+    };
+    run(vec![create(1)]).await.unwrap();
+    run(vec![
+        ColumnChange::DropTrigger {
+            name: "trig_items_touch".into(),
+        },
+        create(10),
+    ])
+    .await
+    .unwrap();
+    let rows = conn
+        .execute_all(query(
+            "INSERT INTO trig_items (id, name) VALUES (1, 'a');
+             UPDATE trig_items SET name = 'ilk' WHERE id = 1;
+             SELECT name, touched FROM trig_items",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.last().unwrap().rows,
+        [vec![Value::Text("ILK".into()), Value::Int(10)]]
+    );
+    let structure = conn.table_structure(None, "trig_items").await.unwrap();
+    assert_eq!(structure.triggers.len(), 1);
+    assert!(
+        structure.triggers[0]
+            .definition
+            .as_deref()
+            .unwrap()
+            .contains("OLD.touched + 10")
+    );
+    conn.execute(query("DROP TABLE trig_items", None))
+        .await
+        .unwrap();
+}

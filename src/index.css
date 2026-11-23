@@ -221,6 +221,34 @@ svg.lucide {
 .cm-editor .cm-error-gutter {
   width: 14px;
 }
+/* AI05: a review's marks differ from the server's: hollow diamond, dotted underline. */
+.cm-editor .cm-ai-diamond {
+  width: 8px;
+  height: 8px;
+  margin: 6px 0 0 5px;
+  border: 1.5px solid var(--text-3);
+  transform: rotate(45deg);
+}
+.cm-editor .cm-ai-diamond.cm-ai-error {
+  border-color: var(--danger);
+}
+.cm-editor .cm-ai-diamond.cm-ai-warning {
+  border-color: var(--warn);
+}
+.cm-editor .cm-ai-token {
+  text-decoration: underline dotted var(--text-3);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+.cm-editor .cm-ai-token.cm-ai-error {
+  text-decoration-color: var(--danger);
+}
+.cm-editor .cm-ai-token.cm-ai-warning {
+  text-decoration-color: var(--warn);
+}
+.cm-editor .cm-flash-line {
+  background: var(--accent-tint);
+}
 .cm-editor .cm-error-diamond {
   width: 8px;
   height: 8px;

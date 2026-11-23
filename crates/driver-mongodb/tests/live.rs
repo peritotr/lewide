@@ -1096,3 +1096,71 @@ async fn tls_modes() {
         "{wrong_name:?}"
     );
 }
+
+#[tokio::test]
+async fn runs_an_aggregation_pipeline_a_page_at_a_time() {
+    let db = "dbclient_test_aggregate";
+    let conn = connect_or_skip!(db);
+    let store = conn.document().unwrap();
+    seed_products(store, db).await;
+
+    let page = |skip: u64, limit: u32| {
+        FindRequest {
+        pipeline: Some(
+            "[ { $unwind: '$tags' }, { $group: { _id: '$tags', n: { $sum: 1 } } }, { $sort: { n: -1, _id: 1 } } ]"
+                .into(),
+        ),
+        skip,
+        limit,
+        ..request(db, "products")
+    }
+    };
+    let first = store.find(page(0, 2)).await.unwrap();
+    let groups: Vec<_> = first
+        .documents
+        .iter()
+        .map(|d| (d.document["_id"].clone(), d.document["n"].clone()))
+        .collect();
+    assert_eq!(
+        groups,
+        [
+            (
+                serde_json::json!("steel"),
+                serde_json::json!({"$numberInt": "3"})
+            ),
+            (
+                serde_json::json!("small"),
+                serde_json::json!({"$numberInt": "2"})
+            ),
+        ]
+    );
+    assert!(first.has_more);
+    let last = store.find(page(2, 2)).await.unwrap();
+    assert_eq!(last.documents.len(), 1);
+    assert_eq!(last.documents[0].document["_id"], "heavy");
+    assert!(!last.has_more);
+    assert!(last.documents[0].size_bytes > 0);
+
+    // A pipeline that does not read says where.
+    let error = store
+        .find(FindRequest {
+            pipeline: Some("[ { $match: { a: } } ]".into()),
+            ..request(db, "products")
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, Error::Database { code: Some(code), .. } if code == "invalid_pipeline"),
+        "{error:?}"
+    );
+    // The server's own refusal comes back too.
+    assert!(
+        store
+            .find(FindRequest {
+                pipeline: Some("[ { $nosuchstage: 1 } ]".into()),
+                ..request(db, "products")
+            })
+            .await
+            .is_err()
+    );
+}

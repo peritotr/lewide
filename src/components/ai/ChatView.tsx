@@ -1,13 +1,14 @@
-// The AI chat tab (AI13): a conversation about one connection's database.
-// The table checklist, quick replies and the trimmed-context strip (AI14)
-// need support from the core and are not built yet.
-import { ArrowUp, Sparkles } from "lucide-react";
+// The AI chat tab (AI13): a conversation about one connection's database,
+// with quick replies to a question and the trimmed-context strip (AI14).
+// The table checklist needs support from the core and is not built yet.
+import { ArrowUp, Info, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { activeProvider, ask, isAsking, loadProviders, sendsSchema, stopAsking, useAi } from "../../ai-store";
+import { ai, type SchemaContext } from "../../lib/ai";
 import { typeOf } from "../../lib/types";
 import { t } from "../../i18n";
 import { editSql, openDialog, openQueryWith, useApp, type Conn, type Tab } from "../../store";
-import { Button } from "../dialog";
+import { Button, Strip } from "../dialog";
 import { TabBar } from "../TabBar";
 import { EnvTag } from "../ui";
 import { Answer } from "./Answer";
@@ -25,8 +26,22 @@ export function ChatView({ tab, conn }: { tab: Tab; conn: Conn | null }) {
   const connected = !!conn && conn.session !== null;
   const schema = connected && sendsSchema(production, privacy);
   const tables = conn ? (conn.objects[conn.namespace ?? ""] ?? []).filter((o) => o.kind === "table").length : 0;
+  // How much of the structure a request carries: large schemas are cut down.
+  const [context, setContext] = useState<SchemaContext | null>(null);
 
   useEffect(() => void loadProviders(), []);
+  useEffect(() => {
+    if (!schema || conn?.session == null) return setContext(null);
+    let live = true;
+    ai.previewContext(conn.session, conn.namespace ?? undefined).then(
+      (c) => live && setContext(c),
+      () => live && setContext(null),
+    );
+    return () => {
+      live = false;
+    };
+  }, [schema, conn?.session, conn?.namespace]);
+  const trimmed = context !== null && context.tables_detailed < context.tables_total;
   useEffect(() => {
     body.current?.scrollTo({ top: body.current.scrollHeight });
   }, [turns.length, turns[turns.length - 1]?.text.length]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -54,14 +69,14 @@ export function ChatView({ tab, conn }: { tab: Tab; conn: Conn | null }) {
   };
 
   return (
-    <main className="grid min-h-0 min-w-0 bg-panel" style={{ gridTemplateRows: `34px ${production ? "4px" : "0px"} 36px minmax(0,1fr) auto` }} onKeyDown={(e) => e.key === "Escape" && busy && stopAsking(tab.id)}>
+    <main className="grid min-h-0 min-w-0 bg-panel" style={{ gridTemplateRows: `34px ${production ? "4px" : "0px"} 36px auto minmax(0,1fr) auto` }} onKeyDown={(e) => e.key === "Escape" && busy && stopAsking(tab.id)}>
       <TabBar />
       <div title={production ? t("Production connection") : undefined} className={production ? "production-band" : ""} />
 
       <div className="flex items-center gap-s3 border-b border-line px-[10.2px] whitespace-nowrap">
         <span className="font-mono text-[12.5px] font-medium">{conn ? [conn.name, conn.namespace].filter(Boolean).join(" / ") : t("No connection")}</span>
         {conn && production && <EnvTag environment={conn.environment} />}
-        {schema && <span className="text-[12.5px] font-medium">{t("{count} tables in context", { count: tables })}</span>}
+        {schema && <span className="text-[12.5px] font-medium">{trimmed ? t("{detailed} of {total} tables in context", { detailed: context.tables_detailed, total: context.tables_total }) : t("{count} tables in context", { count: context?.tables_total ?? tables })}</span>}
         <span className="min-w-0 truncate text-[12.5px] text-text-2">{schema ? t("Schema and messages only · no row data") : t("Messages only · no schema, no row data")}</span>
         <button type="button" className="text-[12.5px] text-accent-text hover:underline" onClick={() => openDialog({ kind: "ai-sent", connId: schema ? conn!.id : null, sql: null, lines: null })}>
           {t("View what is sent")}
@@ -69,6 +84,14 @@ export function ChatView({ tab, conn }: { tab: Tab; conn: Conn | null }) {
         <span className="flex-1" />
         <ProviderSelect />
       </div>
+      {trimmed ? (
+        // "Choose tables" needs the core to take a table list; it is not built.
+        <Strip kind="note" icon={<Info size={13} />} className="border-x-0 border-t-0 bg-accent-tint">
+          {t("Context trimmed. The schema is too large for this model, so the {detailed} most relevant of {total} tables are described in full and the others by name only. Answers about other tables may be wrong.", { detailed: context.tables_detailed, total: context.tables_total })}
+        </Strip>
+      ) : (
+        <div />
+      )}
 
       <div ref={body} className="min-h-0 overflow-auto">
         {loaded && !provider ? (
@@ -95,7 +118,7 @@ export function ChatView({ tab, conn }: { tab: Tab; conn: Conn | null }) {
                 </div>
                 <div className="grid grid-cols-[44px_minmax(0,1fr)]">
                   <Sparkles size={14} strokeWidth={1.5} className="mt-[2px] text-accent-text" />
-                  <Answer thread={tab.id} turn={turn} conn={conn} actions={{ insert, retry: () => send(turn.request) }} />
+                  <Answer thread={tab.id} turn={turn} conn={conn} actions={{ insert, retry: () => send(turn.request), reply: busy ? undefined : send }} />
                 </div>
               </div>
             ))}

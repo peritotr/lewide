@@ -150,14 +150,18 @@ impl Connection for PostgresConnection {
         let mut set_started = Instant::now();
 
         // The simple protocol reports column names only. Preparing the text first
-        // yields the types; it fails for multi-statement text, and then values
-        // are returned as plain text.
-        let types: Option<Vec<Type>> = self
-            .client
-            .prepare(&request.statement)
-            .await
-            .ok()
-            .map(|s| s.columns().iter().map(|c| c.type_().clone()).collect());
+        // yields the types. Text with several statements cannot be prepared, and
+        // is not tried: a failed prepare would abort an open transaction. Its
+        // values are returned as plain text.
+        let types: Option<Vec<Type>> = if several_statements(&request.statement) {
+            None
+        } else {
+            self.client
+                .prepare(&request.statement)
+                .await
+                .ok()
+                .map(|s| s.columns().iter().map(|c| c.type_().clone()).collect())
+        };
 
         let stream = self
             .client
@@ -882,8 +886,98 @@ fn query_err(e: tokio_postgres::Error) -> Error {
     }
 }
 
+/// Whether the text holds more than one statement: a `;` outside quotes,
+/// dollar quotes and comments, with more than space or comments after it.
+/// It works on bytes: every character it looks for is ASCII, and UTF-8 never
+/// uses an ASCII byte inside another character.
+fn several_statements(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let find = |from: usize, needle: &[u8]| {
+        bytes[from.min(bytes.len())..]
+            .windows(needle.len())
+            .position(|w| w == needle)
+            .map(|n| from + n)
+    };
+    let mut i = 0;
+    let mut ended = false;
+    while i < bytes.len() {
+        match bytes[i] {
+            quote @ (b'\'' | b'"') => {
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == quote {
+                        // A doubled quote stays inside.
+                        if bytes.get(i + 1) == Some(&quote) {
+                            i += 2;
+                            continue;
+                        }
+                        break;
+                    }
+                    i += 1;
+                }
+                i += 1;
+            }
+            b'-' if bytes.get(i + 1) == Some(&b'-') => {
+                i = find(i, b"\n").unwrap_or(bytes.len());
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                i = find(i + 2, b"*/").map_or(bytes.len(), |n| n + 2);
+            }
+            b'$' => {
+                // $tag$ … $tag$, where the tag may be empty.
+                let mut end = i + 1;
+                while end < bytes.len()
+                    && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
+                {
+                    end += 1;
+                }
+                if bytes.get(end) == Some(&b'$') {
+                    let tag = &bytes[i..=end];
+                    i = find(end + 1, tag).map_or(bytes.len(), |n| n + tag.len());
+                } else {
+                    i += 1;
+                }
+            }
+            b';' => {
+                ended = true;
+                i += 1;
+            }
+            c if c.is_ascii_whitespace() => i += 1,
+            _ if ended => return true,
+            _ => i += 1,
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod unit_tests {
+    use super::several_statements;
+
+    #[test]
+    fn counts_statements_outside_quotes_and_bodies() {
+        assert!(!several_statements("SELECT 1"));
+        assert!(!several_statements("SELECT 1;  -- done\n"));
+        assert!(!several_statements(
+            "SELECT 'a;b', \"x;y\" FROM t; /* end */"
+        ));
+        assert!(!several_statements("SELECT 'it''s; fine'"));
+        assert!(!several_statements(
+            "CREATE FUNCTION f() RETURNS int AS $body$ BEGIN RETURN 1; END; $body$ LANGUAGE plpgsql;"
+        ));
+        assert!(!several_statements("DO $$ BEGIN PERFORM 1; END $$"));
+        assert!(several_statements("SELECT 1; SELECT 2"));
+        assert!(several_statements(
+            "CREATE FUNCTION f() RETURNS trigger AS $$ BEGIN RETURN NEW; END; $$ LANGUAGE plpgsql;\nCREATE TRIGGER t BEFORE UPDATE ON x FOR EACH ROW EXECUTE FUNCTION f();"
+        ));
+        assert!(several_statements("SELECT 1 -- a;\n; SELECT 2"));
+        // A dollar sign that opens no quote: a positional parameter.
+        assert!(!several_statements("SELECT $1"));
+        // Text outside ASCII is passed over a byte at a time.
+        assert!(!several_statements("SELECT 'ğüş' AS şehir;"));
+        assert!(several_statements("SELECT 'ğ'; SELECT 'İzmir'"));
+    }
+
     use super::*;
 
     #[test]

@@ -11,8 +11,9 @@ let providers: ProviderEntry[] = [
 
 const REVIEW = `Verdict: Warnings
 
-1. Line 1: \`SELECT *\` reads every column; name the ones you need.
-2. Line 3: there is no LIMIT, and \`orders\` has about 8.4M rows.
+- WARNING line 1: \`SELECT\` with \`*\` reads every column; name the ones you need.
+- WARNING line 3: there is no LIMIT, and \`orders\` has about 8.4M rows.
+- NOTE line 2: \`status\` is compared with text; an enum would catch typos.
 
 Suggested query:
 \`\`\`sql
@@ -39,6 +40,11 @@ WHERE o.status = 'paid' AND o.created_at >= now() - interval '30 days'
 GROUP BY u.country
 ORDER BY revenue DESC;
 \`\`\``;
+
+// A first chat request is answered with a question, as an ambiguous one would be (AI14).
+const QUESTION = `Question: Which date should decide the last 30 days?
+- Option: orders.created_at — when the order was placed
+- Option: orders.paid_at — when it was paid`;
 
 export const demoAi: AiBackend = {
   listProviders: async () => providers,
@@ -78,7 +84,8 @@ export const demoAi: AiBackend = {
   }),
   ask(request, onText) {
     let stopped = false;
-    const reply = request.task.kind === "ask" ? CHAT : request.task.kind === "explain" ? "It reads paid orders, newest first. Nothing is changed." : REVIEW;
+    const chat = request.history?.length ? CHAT : QUESTION;
+    const reply = request.task.kind === "ask" ? chat : request.task.kind === "explain" ? "It reads paid orders, newest first. Nothing is changed." : REVIEW;
     const done = (async (): Promise<Completion> => {
       if (providers.length === 0) throw { kind: "ai", message: { reason: "not_configured", message: "No AI provider is set up." } };
       for (let i = 0; i < reply.length; i += 24) {

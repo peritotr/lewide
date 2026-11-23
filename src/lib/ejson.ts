@@ -164,3 +164,51 @@ export function cellAt(document: Record<string, Json>, column: string): Json | u
   const outer = document[column.slice(0, dot)];
   return isObject(outer) && bsonType(outer) === "object" ? outer[column.slice(dot + 1)] : undefined;
 }
+
+/**
+ * A value typed where there was none to keep (a null): JSON or Extended JSON
+ * by its own syntax, a whole number as int32 or int64 as the shell stores it,
+ * and any other text as a string.
+ */
+export function parseLiteral(text: string): { value: Json } | { error: string } {
+  const trimmed = text.trim();
+  if (trimmed === "") return { error: "a value, such as 42, \"text\", true or null" };
+  let parsed: Json;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    // A JSON-looking text that does not read is a mistake, not a string.
+    if (/^[[{"]/.test(trimmed)) return { error: "valid JSON" };
+    return { value: text };
+  }
+  if (typeof parsed !== "number") return { value: parsed };
+  if (/^-?\d+$/.test(trimmed)) {
+    if (Math.abs(parsed) <= 2147483647) return { value: { $numberInt: trimmed } };
+    return { value: { $numberLong: trimmed } };
+  }
+  return { value: { $numberDouble: trimmed } };
+}
+
+export type QueryToken = { text: string; tone: "str" | "num" | "kw" | "key" | "op" | null };
+
+/**
+ * A query document split into coloured parts, as typed in the query fields:
+ * strings, numbers, true/false/null, keys before a colon and `$` operators.
+ * Joined back together, the parts are the text unchanged.
+ */
+export function queryTokens(text: string): QueryToken[] {
+  const out: QueryToken[] = [];
+  const re = /("(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?)|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|([$A-Za-z_][\w$.]*)|(\s+)|([^])/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text))) {
+    const [whole, str, num, word] = match;
+    const rest = text.slice(re.lastIndex);
+    const isKey = /^\s*:/.test(rest);
+    if (str !== undefined) out.push({ text: whole, tone: isKey ? "key" : "str" });
+    else if (num !== undefined) out.push({ text: whole, tone: "num" });
+    else if (word !== undefined)
+      out.push({ text: whole, tone: word.startsWith("$") ? "op" : isKey ? "key" : /^(true|false|null)$/.test(word) ? "kw" : null });
+    else out.push({ text: whole, tone: null });
+  }
+  return out;
+}

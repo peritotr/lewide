@@ -5,11 +5,13 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, KeyRound, Plus, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, dbError, errorMessage, inTauri, type DocCollectionInfo, type DocumentChange, type ExportFormat, type FindPage, type IndexDescription } from "../lib/api";
-import { bsonType, cellAt, isContainer, parseAs, preview, scalarText, scalarTone, tableColumns, typeLabel } from "../lib/ejson";
+import { bsonType, cellAt, isContainer, parseAs, parseLiteral, preview, queryTokens, scalarText, scalarTone, tableColumns, typeLabel } from "../lib/ejson";
 import { formatBytes } from "../lib/kv";
 import { loadObjects, type Conn, type Tab } from "../store";
 import { t, tn } from "../i18n";
+import { CellViewer } from "./CellViewer";
 import { Button, Dialog, Field, Segmented, Strip, TextInput } from "./dialog";
+import type { Anchor } from "./menu";
 import { TabBar } from "./TabBar";
 import { LoadError, Loading } from "./TableView";
 import { Tag } from "./ui";
@@ -17,17 +19,22 @@ import { Tag } from "./ui";
 const ghost = "flex h-[26px] flex-none items-center gap-[6px] px-s2 text-[12.5px] whitespace-nowrap enabled:hover:bg-hover disabled:cursor-not-allowed disabled:opacity-45";
 const label = "font-heading text-[10.5px] font-semibold tracking-[.08em] text-text-2 uppercase";
 const TONE = { str: "var(--syn-str)", num: "var(--syn-num)", kw: "var(--syn-kw)", fn: "var(--syn-fn)" };
+// The query fields' colours: keys as in the tree, operators as functions.
+const QUERY_TONE = { str: "var(--syn-str)", num: "var(--syn-num)", kw: "var(--syn-kw)", key: "var(--syn-kw)", op: "var(--syn-fn)" };
 
 type Mode = "tree" | "table" | "json";
 type Doc = Record<string, unknown>;
-type Part = "filter" | "projection" | "sort";
+type Part = "filter" | "projection" | "sort" | "pipeline";
 interface Query {
   filter: string;
   projection: string;
   sort: string;
   limit: string;
+  /** Not drawn in the design: MongoDB's aggregation pipeline, run in place of the other fields. */
+  pipeline: string;
+  aggregate: boolean;
 }
-const EMPTY: Query = { filter: "", projection: "", sort: "", limit: "50" };
+const EMPTY: Query = { filter: "", projection: "", sort: "", limit: "50", pipeline: "", aggregate: false };
 /** Asks before a write on Production; otherwise the write runs at once. */
 interface Confirm {
   title: string;
@@ -66,6 +73,8 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
   const run = useRef(0);
 
   const readOnly = info?.kind === "view";
+  // Documents a pipeline built are not the stored ones: they are shown, not edited.
+  const resultOnly = readOnly || applied.aggregate || !!applied.projection;
   const limitOf = (q: Query) => Math.max(1, Math.min(1000, Number.parseInt(q.limit, 10) || 50));
 
   const find = useCallback(
@@ -76,12 +85,16 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
       setError(null);
       setInvalid(null);
       try {
-        const loaded = await api.docFind(session, { database, collection, filter: query.filter || null, projection: query.projection || null, sort: query.sort || null, skip: from, limit: limitOf(query) });
+        const loaded = query.aggregate
+          ? await api.docFind(session, { database, collection, pipeline: query.pipeline || null, skip: from, limit: limitOf(query) })
+          : await api.docFind(session, { database, collection, filter: query.filter || null, projection: query.projection || null, sort: query.sort || null, skip: from, limit: limitOf(query) });
         if (id !== run.current) return;
         setPage(loaded);
         setApplied(query);
         setSkip(from);
-        if (query.filter !== applied.filter || total === null) {
+        // An aggregation's length is only known by running it to the end.
+        if (query.aggregate) setTotal(null);
+        else if (query.filter !== applied.filter || applied.aggregate || total === null) {
           setTotal(null);
           api.docCount(session, database, collection, query.filter || null).then(
             (n) => id === run.current && setTotal(n),
@@ -91,7 +104,7 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
       } catch (e) {
         if (id !== run.current) return;
         const failed = dbError(e);
-        const part = /^invalid_(filter|projection|sort)$/.exec(failed?.code ?? "")?.[1] as Part | undefined;
+        const part = /^invalid_(filter|projection|sort|pipeline)$/.exec(failed?.code ?? "")?.[1] as Part | undefined;
         // D03: text that does not read leaves the last results where they are.
         if (failed && part) setInvalid({ part, message: failed.message, position: failed.position ?? null });
         else if (page) setNotice({ text: errorMessage(e), error: true });
@@ -211,19 +224,16 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
     );
   }
 
-  const field = (part: keyof Query, name: string, className: string, placeholder: string, hint?: string) => (
+  const field = (part: Part | "limit", name: string, className: string, placeholder: string, hint?: string) => (
     <label title={hint} className={`flex min-w-0 flex-col gap-[3px] ${className}`}>
       <span className={label}>{name}</span>
-      <input
-        aria-label={name}
-        aria-invalid={invalid?.part === part}
-        spellCheck={false}
-        autoCapitalize="off"
-        autoCorrect="off"
+      <QueryInput
+        name={name}
+        coloured={part !== "limit" && !couch}
+        invalid={invalid?.part === part}
         placeholder={placeholder}
-        className={`h-[26px] min-w-0 border bg-panel px-[8px] font-mono text-[12.5px] placeholder:text-text-3 focus:border-accent focus:outline-none ${invalid?.part === part ? "border-danger" : "border-line"}`}
         value={draft[part]}
-        onChange={(e) => setDraft({ ...draft, [part]: e.target.value })}
+        onChange={(value) => setDraft({ ...draft, [part]: value })}
       />
     </label>
   );
@@ -289,6 +299,24 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
         }}
       >
         <div className="flex items-end gap-s2">
+          {conn.driver.id === "mongodb" && (
+            <div className="flex flex-none flex-col gap-[3px]">
+              <span className={label}>{t("Mode")}</span>
+              <Segmented<"find" | "aggregate">
+                label={t("Mode")}
+                value={draft.aggregate ? "aggregate" : "find"}
+                onChange={(value) => setDraft({ ...draft, aggregate: value === "aggregate" })}
+                options={[
+                  { value: "find", label: t("Find") },
+                  { value: "aggregate", label: t("Aggregate") },
+                ]}
+              />
+            </div>
+          )}
+          {draft.aggregate ? (
+            field("pipeline", t("Pipeline"), "flex-1", "[ { $match: { } }, { $group: { _id: \"$field\", n: { $sum: 1 } } } ]", t("A list of stages, run on the collection; the page's $skip and $limit are added after them."))
+          ) : (
+          <>
           {/* Not drawn in the design: the hint on what Elasticsearch's filter field takes. */}
           {field(
             "filter",
@@ -303,15 +331,18 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
           )}
           {field("projection", t("Project"), "w-[150px] flex-none", "{ }")}
           {field("sort", t("Sort"), "w-[190px] flex-none", search || couch ? "{ year: -1 }" : "{ _id: 1 }")}
+          </>
+          )}
           {field("limit", t("Limit"), "w-[70px] flex-none", "50")}
           <Button type="submit" variant="primary" disabled={loading}>
-            {t("Find")} ↵
+            {draft.aggregate ? t("Run") : t("Find")} ↵
           </Button>
           <Button
             variant="ghost"
             onClick={() => {
-              setDraft(EMPTY);
-              void find(EMPTY, 0);
+              const reset = { ...EMPTY, aggregate: draft.aggregate };
+              setDraft(reset);
+              void find(reset, 0);
             }}
           >
             {t("Reset")}
@@ -321,7 +352,7 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
           <p role="alert" className="flex items-start gap-[6px] text-[12.5px] text-danger">
             <TriangleAlert size={13} className="mt-[2px] flex-none" />
             <span className="selectable">
-              {invalid.part === "filter" ? t("Filter is not valid:") : invalid.part === "sort" ? t("Sort is not valid:") : t("Projection is not valid:")} {invalid.message}
+              {invalid.part === "filter" ? t("Filter is not valid:") : invalid.part === "sort" ? t("Sort is not valid:") : invalid.part === "pipeline" ? t("Pipeline is not valid:") : t("Projection is not valid:")} {invalid.message}
               {invalid.position !== null && ` ${t("at position {position}", { position: invalid.position })}`}. {page && t("The last results stay below.")}
             </span>
           </p>
@@ -334,16 +365,16 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
         <Loading text={t("Reading {name}…", { name: collection })} />
       ) : documents.length === 0 ? (
         <div className="grid place-items-center">
-          <p className="text-text-2">{applied.filter ? t("No documents match the filter.") : t("This collection is empty.")}</p>
+          <p className="text-text-2">{applied.aggregate ? t("The pipeline returned no documents.") : applied.filter ? t("No documents match the filter.") : t("This collection is empty.")}</p>
         </div>
       ) : mode === "tree" ? (
         <div className="min-h-0 overflow-auto">
           {page.documents.map((found, i) => (
-            <DocumentBlock key={idText(found.document._id) + i} ordinal={skip + i + 1} document={found.document} size={found.size_bytes} startOpen={i === 0} editable={!readOnly && !applied.projection} onSet={setField} onDelete={remove} />
+            <DocumentBlock key={idText(found.document._id) + i} ordinal={skip + i + 1} document={found.document} size={found.size_bytes} startOpen={i === 0} editable={!resultOnly} onSet={setField} onDelete={remove} />
           ))}
         </div>
       ) : mode === "table" ? (
-        <DocumentTable documents={documents} />
+        <DocumentTable documents={documents} first={skip + 1} />
       ) : (
         <JsonText documents={documents} onCopied={() => setNotice({ text: t("Copied"), error: false })} />
       )}
@@ -353,7 +384,7 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
           {documents.length === 0
             ? t("No documents")
             : total !== null
-              ? applied.filter
+              ? applied.filter && !applied.aggregate
                 ? t("Documents {first}–{last} of {total} matching", { first: skip + 1, last: skip + documents.length, total })
                 : t("Documents {first}–{last} of {total}", { first: skip + 1, last: skip + documents.length, total })
               : t("Documents {first}–{last}", { first: skip + 1, last: skip + documents.length })}
@@ -366,10 +397,10 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
             <ChevronRight size={13} />
           </button>
         </div>
-        {invalid && <span className="text-danger">{t("Filter not applied")}</span>}
+        {invalid && <span className="text-danger">{invalid.part === "pipeline" ? t("Pipeline not run") : t("Filter not applied")}</span>}
         <span className="flex-1" />
         {page && <span className="font-mono text-[11.5px]">{page.elapsed_ms} ms</span>}
-        <span>{readOnly ? t("Read-only · view") : applied.projection ? t("Read-only while a projection is set") : t("Editable · key _id")}</span>
+        <span>{readOnly ? t("Read-only · view") : applied.aggregate ? t("Read-only · aggregation result") : applied.projection ? t("Read-only while a projection is set") : t("Editable · key _id")}</span>
       </footer>
 
       {notice && (
@@ -735,12 +766,14 @@ function FieldRow({ name, value, depth, path, selected, onSelect, onSet }: Field
   const [problem, setProblem] = useState<string | null>(null);
   const on = selected === path;
   const type = bsonType(value);
-  // The _id cannot be changed, and a null has no type to keep.
-  const canEdit = !!onSet && !container && path !== "_id" && !("error" in parseAs(scalarText(value), value));
+  // The _id cannot be changed. A null has no type to keep: what is typed over it is read as JSON.
+  const isNull = value === null;
+  const read = (text: string) => (isNull ? parseLiteral(text) : parseAs(text, value));
+  const canEdit = !!onSet && !container && path !== "_id" && (isNull || !("error" in parseAs(scalarText(value), value)));
 
   const commit = () => {
     if (draft === null) return;
-    const parsed = parseAs(draft, value);
+    const parsed = read(draft);
     if ("error" in parsed) return setProblem(t("Expected {what}.", { what: parsed.error }));
     if (JSON.stringify(parsed.value) !== JSON.stringify(value)) onSet?.(path, parsed.value);
     setDraft(null);
@@ -788,7 +821,7 @@ function FieldRow({ name, value, depth, path, selected, onSelect, onSet }: Field
             {problem && <span className="flex-none text-[11.5px] text-danger">{problem}</span>}
           </>
         ) : (
-          <span className="selectable min-w-0 flex-1 truncate" style={{ color: TONE[scalarTone(value)] }} title={canEdit ? t("Double-click to edit") : undefined} onDoubleClick={() => canEdit && setDraft(scalarText(value))}>
+          <span className="selectable min-w-0 flex-1 truncate" style={{ color: TONE[scalarTone(value)] }} title={canEdit ? (isNull ? t("Double-click to edit; type a JSON value such as 42, \"text\" or true") : t("Double-click to edit")) : undefined} onDoubleClick={() => canEdit && setDraft(isNull ? "" : scalarText(value))}>
             {type === "string" ? JSON.stringify(value) : scalarText(value)}
           </span>
         )}
@@ -799,10 +832,66 @@ function FieldRow({ name, value, depth, path, selected, onSelect, onSet }: Field
   );
 }
 
-function DocumentTable({ documents }: { documents: Doc[] }) {
+/**
+ * One line of query text with syntax colours (not drawn in the design): the
+ * input's own text is transparent over a copy that carries the colours, kept
+ * at the same horizontal scroll.
+ */
+function QueryInput({ name, value, placeholder, invalid, coloured, onChange }: { name: string; value: string; placeholder: string; invalid: boolean; coloured: boolean; onChange(value: string): void }) {
+  const shadow = useRef<HTMLDivElement>(null);
+  const sync = (input: HTMLInputElement) => {
+    if (shadow.current) shadow.current.scrollLeft = input.scrollLeft;
+  };
+  const box = "h-[26px] min-w-0 border px-[8px] font-mono text-[12.5px] leading-[24px]";
+  return (
+    <div className="relative min-w-0">
+      {coloured && value && (
+        <div ref={shadow} aria-hidden className={`pointer-events-none absolute inset-0 overflow-hidden border-transparent whitespace-pre ${box}`}>
+          {queryTokens(value).map((token, i) => (
+            <span key={i} style={token.tone ? { color: QUERY_TONE[token.tone] } : undefined}>
+              {token.text}
+            </span>
+          ))}
+        </div>
+      )}
+      <input
+        aria-label={name}
+        aria-invalid={invalid}
+        spellCheck={false}
+        autoCapitalize="off"
+        autoCorrect="off"
+        placeholder={placeholder}
+        className={`relative w-full bg-transparent placeholder:text-text-3 focus:border-accent focus:outline-none ${box} ${invalid ? "border-danger" : "border-line"}`}
+        style={coloured && value ? { color: "transparent", caretColor: "var(--text)" } : undefined}
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          sync(e.currentTarget);
+        }}
+        onScroll={(e) => sync(e.currentTarget)}
+        onKeyUp={(e) => sync(e.currentTarget)}
+        onSelect={(e) => sync(e.currentTarget)}
+      />
+    </div>
+  );
+}
+
+function DocumentTable({ documents, first }: { documents: Doc[]; first: number }) {
   const columns = useMemo(() => tableColumns(documents), [documents]);
+  const [viewer, setViewer] = useState<{ anchor: Anchor; row: number; column: string; value: unknown } | null>(null);
   return (
     <div className="min-h-0 overflow-auto">
+      {viewer && (
+        <CellViewer
+          anchor={viewer.anchor}
+          column={viewer.column}
+          typeName={typeLabel(viewer.value)}
+          row={viewer.row}
+          value={{ type: "json", value: viewer.value }}
+          note={t("Read-only · edit it in the Tree view")}
+          onClose={() => setViewer(null)}
+        />
+      )}
       <table className="border-collapse font-mono text-[12.5px]">
         <thead>
           <tr>
@@ -823,10 +912,14 @@ function DocumentTable({ documents }: { documents: Doc[] }) {
                     {value === undefined ? null : value === null ? (
                       <Tag>NULL</Tag>
                     ) : isContainer(value) ? (
-                      // The cell viewer for these is not built yet; the whole value is in the tooltip.
-                      <span className="border border-line px-[5px] py-[1px] text-[11px] text-text-2" title={JSON.stringify(value, null, 2).slice(0, 2000)}>
+                      <button
+                        type="button"
+                        className="border border-line px-[5px] py-[1px] text-[11px] text-text-2 hover:bg-hover"
+                        title={t("Show the whole value")}
+                        onClick={(e) => setViewer({ anchor: e.currentTarget.getBoundingClientRect(), row: first + i, column, value })}
+                      >
                         {typeLabel(value)}
-                      </span>
+                      </button>
                     ) : bsonType(value) === "objectId" ? (
                       <span className="selectable" title={scalarText(value)}>
                         <span className="text-text-3">{scalarText(value).slice(0, 18)}</span>

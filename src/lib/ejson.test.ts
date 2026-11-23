@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bsonType, cellAt, parseAs, preview, scalarText, tableColumns, typeLabel } from "./ejson";
+import { bsonType, cellAt, parseAs, parseLiteral, preview, queryTokens, scalarText, tableColumns, typeLabel } from "./ejson";
 
 const doc = {
   _id: { $oid: "65f1c0a2b7e4d3a1c0ffee01" },
@@ -46,5 +46,37 @@ describe("extended JSON", () => {
     expect(cellAt(doc, "price.currency")).toBe("EUR");
     expect(cellAt(doc, "extra")).toBeUndefined();
     expect(cellAt(doc, "gone")).toBeNull();
+  });
+});
+
+describe("a value typed over a null", () => {
+  it("reads JSON by its syntax and keeps other text as a string", () => {
+    expect(parseLiteral("42")).toEqual({ value: { $numberInt: "42" } });
+    expect(parseLiteral("9007199254740993")).toEqual({ value: { $numberLong: "9007199254740993" } });
+    expect(parseLiteral("1.5")).toEqual({ value: { $numberDouble: "1.5" } });
+    expect(parseLiteral("true")).toEqual({ value: true });
+    expect(parseLiteral("null")).toEqual({ value: null });
+    expect(parseLiteral('"42"')).toEqual({ value: "42" });
+    expect(parseLiteral('{"$date": "2026-01-02T00:00:00Z"}')).toEqual({ value: { $date: "2026-01-02T00:00:00Z" } });
+    expect(parseLiteral("İzmir")).toEqual({ value: "İzmir" });
+    expect(parseLiteral("{ broken")).toEqual({ error: "valid JSON" });
+    expect("error" in parseLiteral("  ")).toBe(true);
+  });
+});
+
+describe("query field colours", () => {
+  it("colours keys, operators, strings, numbers and keywords without changing the text", () => {
+    const text = `{ price: { $lt: 10.5 }, "city": 'İzmir', ok: true }`;
+    const tokens = queryTokens(text);
+    expect(tokens.map((t) => t.text).join("")).toBe(text);
+    const tone = (part: string) => tokens.find((t) => t.text === part)?.tone;
+    expect(tone("price")).toBe("key");
+    expect(tone("$lt")).toBe("op");
+    expect(tone("10.5")).toBe("num");
+    expect(tone('"city"')).toBe("key");
+    expect(tone("'İzmir'")).toBe("str");
+    expect(tone("true")).toBe("kw");
+    // Half-typed text still splits.
+    expect(queryTokens(`{ a: "open`).map((t) => t.text).join("")).toBe(`{ a: "open`);
   });
 });

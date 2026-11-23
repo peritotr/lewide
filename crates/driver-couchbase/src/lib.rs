@@ -388,6 +388,13 @@ impl DocumentStore for CouchbaseConnection {
 
     async fn find(&self, request: FindRequest) -> Result<FindPage> {
         let started = Instant::now();
+        if request
+            .pipeline
+            .as_deref()
+            .is_some_and(|p| !p.trim().is_empty())
+        {
+            return Err(Error::Unsupported("aggregation pipelines on Couchbase"));
+        }
         let space = keyspace(&request.database, &request.collection)?;
         let limit = request.limit.clamp(1, MAX_PAGE) as u64;
         let projection = query::projection(request.projection.as_deref())?;

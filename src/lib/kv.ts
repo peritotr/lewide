@@ -112,3 +112,46 @@ export function jsonError(text: string): string | null {
     return e instanceof Error ? e.message : String(e);
   }
 }
+
+/** A group of keys that share the text up to a `:`, as the sidebar shows it. */
+export interface KeyPrefix {
+  /** The shared text with its trailing `:`, such as `user:` or `user:42:`. */
+  prefix: string;
+  /** The last part alone, such as `42`. */
+  label: string;
+  /** Keys under it among those read. */
+  count: number;
+  children: KeyPrefix[];
+}
+
+/**
+ * The key prefixes of a sample of keys, split on `:`, up to `depth` levels.
+ * Keys with no `:` belong to no group. Groups are in name order.
+ */
+export function prefixTree(keys: string[], depth = 3, parent = ""): KeyPrefix[] {
+  if (depth <= 0) return [];
+  const groups = new Map<string, string[]>();
+  for (const key of keys) {
+    if (!key.startsWith(parent)) continue;
+    const at = key.indexOf(":", parent.length);
+    // A key that ends at the colon is a key, not a group.
+    if (at < 0 || at === key.length - 1) continue;
+    const prefix = key.slice(0, at + 1);
+    const list = groups.get(prefix);
+    if (list) list.push(key);
+    else groups.set(prefix, [key]);
+  }
+  return [...groups.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([prefix, members]) => ({
+      prefix,
+      label: prefix.slice(parent.length, -1),
+      count: members.length,
+      children: prefixTree(members, depth - 1, prefix),
+    }));
+}
+
+/** A glob that matches the keys under a prefix, with glob characters escaped. */
+export function prefixPattern(prefix: string): string {
+  return `${prefix.replace(/[\\*?[\]]/g, (c) => `\\${c}`)}*`;
+}

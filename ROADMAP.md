@@ -16,10 +16,10 @@ yet. It changes as work lands.
 | TimescaleDB | ✅ Supported | Same views as PostgreSQL; hypertables open like tables, chunk and policy views not built |
 | MySQL, MariaDB, TiDB | ✅ Supported | Same views as PostgreSQL |
 | SQLite | ✅ Supported | Local files |
-| SQL Server | ✅ Supported | Changing columns, query plans and Stop; Windows sign-in and named instances not built |
-| ClickHouse | ✅ Supported | Read-only grid and structure by design: its keys do not identify one row |
-| Redis, Valkey | ✅ Supported | Key browser and editors for every core type, TLS |
-| MongoDB | ✅ Supported | Documents as tree, table or JSON; in-place edits |
+| SQL Server | ✅ Supported | Changing columns, query plans, Stop and named instances; Windows sign-in not built |
+| ClickHouse | ✅ Supported | Read-only grid by design (its keys do not identify one row); columns changed from the structure view |
+| Redis, Valkey | ✅ Supported | Key browser and editors for every core type, key prefixes in the sidebar, TLS |
+| MongoDB | ✅ Supported | Documents as tree, table or JSON; in-place edits; aggregation pipelines |
 | Elasticsearch, OpenSearch | ✅ Supported | Indices in the document view: Query DSL, field shorthand or query string; edits; Dev Tools requests in query tabs |
 | pgvector | ✅ Supported | Tables with a vector column searched like a vector database; SQL as usual |
 | Qdrant | ✅ Supported | Vector search with payload filters; search by text through an AI provider's embedding model |
@@ -30,7 +30,8 @@ yet. It changes as work lands.
 | DuckDB | ✅ Supported | Embedded, built into the app; editing and column changes |
 
 Across all of them: saved connections with passwords in the system
-credential store, SSH tunnels, TLS, Production safeguards (a confirmation
+credential store, exported to a file and imported elsewhere (passwords are
+never written to the file), SSH tunnels, TLS, Production safeguards (a confirmation
 before every write), English and Turkish, light and dark themes.
 
 ## Next
@@ -41,8 +42,7 @@ before every write), English and Turkish, light and dark themes.
 
 **Finishing what exists**
 
-- Changing columns on ClickHouse; creating and editing triggers
-- Structured AI findings (review results shown in place, not only as text)
+- Choosing which tables the AI chat sends when a schema is too large
 
 **Release**
 

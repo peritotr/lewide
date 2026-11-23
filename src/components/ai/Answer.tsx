@@ -1,12 +1,13 @@
 // One answer of the assistant, as the Ask AI panel and the chat tab draw it:
-// prose, SQL blocks, a suggested statement as a diff (AI07), index advice (AI09),
-// the streaming cursor (AI10), errors (AI11) and the usage line.
+// prose, review findings (AI05), a clarifying question with quick replies
+// (AI14), SQL blocks, a suggested statement as a diff (AI07), index advice
+// (AI09), the streaming cursor (AI10), errors (AI11) and the usage line.
 import { Check, Sparkles, Square, TriangleAlert } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { stopAsking, updateTurn, type Turn } from "../../ai-store";
-import { segments, verdict, type AiError } from "../../lib/ai";
+import { clarification, findings, segments, verdict, type AiError, type Finding, type Severity } from "../../lib/ai";
 import { diffCounts, diffLines } from "../../lib/diff";
-import { t } from "../../i18n";
+import { t, tn } from "../../i18n";
 import { openDialog, openQueryWith, type Conn } from "../../store";
 import { Button, Strip } from "../dialog";
 import { Tag } from "../ui";
@@ -94,6 +95,86 @@ export interface AnswerActions {
   /** Chat only: inserts at the caret of the connection's last query tab. */
   insert?(sql: string): void;
   retry?(): void;
+  /** Panel only: moves the caret to a line of the editor and flashes it (AI05). */
+  goToLine?(line: number): void;
+  /** Panel only: asks for a corrected statement after a review. */
+  suggestFix?(): void;
+  /** Sends a quick reply to a clarifying question (AI14). */
+  reply?(text: string): void;
+}
+
+const SEVERITY: Record<Severity, { word: () => string; kind: "danger" | "warn" | undefined }> = {
+  error: { word: () => t("Error"), kind: "danger" },
+  warning: { word: () => t("Warning"), kind: "warn" },
+  note: { word: () => t("Note"), kind: undefined },
+};
+
+/** AI05: the verdict with its counts, then one block per finding. */
+function Findings({ list, scope, actions }: { list: Finding[]; scope: Turn["scope"]; actions: AnswerActions }) {
+  const count = (severity: Severity) => list.filter((f) => f.severity === severity).length;
+  const errors = count("error");
+  const counts = [
+    errors ? tn(errors, "{count} error", "{count} errors") : null,
+    count("warning") ? tn(count("warning"), "{count} warning", "{count} warnings") : null,
+    count("note") ? tn(count("note"), "{count} note", "{count} notes") : null,
+  ].filter(Boolean);
+  return (
+    <div className="flex flex-col gap-s2">
+      <div className="flex items-center gap-s2 text-[12.5px]">
+        <TriangleAlert size={14} className={errors ? "text-danger" : "text-warn-text"} />
+        <span className="font-medium">{t("Problems found")}</span>
+        <span className="font-mono text-[11.5px] text-text-2">{counts.join(" · ")}</span>
+      </div>
+      {list.map((finding, i) => {
+        // The finding counts lines within the statement that was sent.
+        const line = finding.line !== null && scope ? scope.fromLine + finding.line - 1 : null;
+        return (
+          <div key={i} className="flex flex-col gap-[6px] border border-line bg-panel p-s2">
+            <div className="flex items-center gap-s2">
+              <Tag kind={SEVERITY[finding.severity].kind}>{SEVERITY[finding.severity].word()}</Tag>
+              <span className="flex-1" />
+              {line !== null && (
+                <button type="button" className="font-mono text-[11.5px] text-accent-text hover:underline disabled:no-underline" disabled={!actions.goToLine} onClick={() => actions.goToLine?.(line)}>
+                  {t("line {number}", { number: line })}
+                </button>
+              )}
+            </div>
+            <Prose text={finding.text} />
+          </div>
+        );
+      })}
+      {actions.suggestFix && (
+        <div>
+          <button type="button" className={small} onClick={actions.suggestFix}>
+            {t("Suggest a fix")}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** AI14: one question and its likely answers as buttons; the first has the focus. */
+function Question({ question, options, onReply }: { question: string; options: { value: string; gloss: string | null }[]; onReply?(text: string): void }) {
+  return (
+    <div className="flex flex-col gap-s2">
+      <p className="selectable text-[12.5px] leading-[1.5] font-medium">{question}</p>
+      {options.map((option, i) => (
+        <button
+          key={option.value}
+          type="button"
+          autoFocus={i === 0}
+          disabled={!onReply}
+          className="flex min-h-[30px] items-center gap-s2 border border-line bg-panel px-s3 text-left text-[12.5px] enabled:hover:border-accent enabled:hover:bg-accent-tint enabled:focus-visible:border-accent enabled:focus-visible:bg-accent-tint enabled:focus-visible:outline-none disabled:opacity-45"
+          onClick={() => onReply?.(option.value)}
+        >
+          <span className="font-mono text-[12px]">{option.value}</span>
+          {option.gloss && <span className="min-w-0 truncate text-text-2">— {option.gloss}</span>}
+        </button>
+      ))}
+      {options.length > 0 && <p className="text-[12px] text-text-2">{t("Or type your own answer below.")}</p>}
+    </div>
+  );
 }
 
 function SqlBlock({ sql, title, conn, actions, children }: { sql: string; title: ReactNode; conn: Conn | null; actions: AnswerActions; children?: ReactNode }) {
@@ -151,9 +232,13 @@ export function Answer({ thread, turn, conn, actions }: { thread: string; turn: 
   }
 
   const review = turn.task.kind === "review" ? verdict(turn.text) : null;
-  const text = review ? turn.text.replace(/^\s*verdict:[^\n]*\n?/i, "") : turn.text;
-  const parts = segments(text);
+  const reviewed = review ? turn.text.replace(/^\s*verdict:[^\n]*\n?/i, "") : turn.text;
+  // A review lists its findings one per line; they get blocks of their own.
+  const found = review && review !== "ok" ? findings(reviewed) : { findings: [], rest: reviewed };
+  const asked = review ? null : clarification(found.rest);
+  const parts = segments(asked ? asked.rest : found.rest);
   const production = conn?.environment === "production";
+  const suggested = parts.some((p) => p.kind === "sql" && p.role === "suggestion");
 
   return (
     <div className="flex flex-col gap-s3">
@@ -163,7 +248,9 @@ export function Answer({ thread, turn, conn, actions }: { thread: string; turn: 
           <p className="text-text-2">{t("This is a review, not a guarantee.")}</p>
         </Strip>
       )}
-      {(review === "errors" || review === "warnings") && (
+      {found.findings.length > 0 && <Findings list={found.findings} scope={turn.scope} actions={{ ...actions, suggestFix: suggested ? undefined : actions.suggestFix }} />}
+      {asked && <Question question={asked.question} options={asked.options} onReply={actions.reply} />}
+      {(review === "errors" || review === "warnings") && found.findings.length === 0 && (
         <div className="flex items-center gap-s2 text-[12.5px]">
           <TriangleAlert size={14} className={review === "errors" ? "text-danger" : "text-warn-text"} />
           <span className="font-medium">{t("Problems found")}</span>

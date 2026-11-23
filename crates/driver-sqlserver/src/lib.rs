@@ -10,6 +10,7 @@
 //! the server session (an open transaction is rolled back); the driver then
 //! opens a new one, so the connection stays usable.
 
+mod browser;
 mod convert;
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
@@ -73,12 +74,28 @@ impl Driver for SqlServerDriver {
 /// A logged-in session for `config`.
 async fn open(config: &ConnectionConfig) -> Result<Session> {
     {
-        let host = config
+        let written = config
             .host
             .clone()
             .filter(|h| !h.trim().is_empty())
             .unwrap_or_else(|| "localhost".into());
-        let port = config.port.unwrap_or(1433);
+        // `server\instance`, or the instance in the Advanced tab.
+        let (host, from_host) = browser::split_instance(&written);
+        let host = host.to_owned();
+        let instance = from_host
+            .map(str::to_owned)
+            .or_else(|| config.params.get("instance").cloned())
+            .filter(|i| !i.trim().is_empty());
+        // A named instance listens on a port the Browser service hands out,
+        // unless the form gives another port than the default. A tunnel
+        // carries TCP only, so through one the port must be given.
+        let port = match (&instance, config.port, config.route) {
+            (Some(instance), None | Some(1433), None) => {
+                browser::instance_port(&format!("{host}:{}", browser::BROWSER_PORT), instance)
+                    .await?
+            }
+            (_, port, _) => port.unwrap_or(1433),
+        };
         let user = config
             .user
             .clone()
@@ -90,6 +107,9 @@ async fn open(config: &ConnectionConfig) -> Result<Session> {
         settings.port(port);
         if let Some(database) = config.database.as_deref().filter(|d| !d.is_empty()) {
             settings.database(database);
+        }
+        if let Some(instance) = &instance {
+            settings.instance_name(instance);
         }
         settings.application_name("LewIDE");
         settings.authentication(AuthMethod::sql_server(

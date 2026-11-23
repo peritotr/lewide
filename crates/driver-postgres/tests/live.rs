@@ -1262,3 +1262,93 @@ async fn adds_and_drops_indexes_keys_and_triggers() {
         .unwrap();
     assert!(structure.indexes.iter().all(|i| i.name != "ok_index"));
 }
+
+#[tokio::test]
+async fn creates_and_replaces_a_trigger_with_its_function() {
+    use dbclient_core::structure::{ColumnChange, apply_on, statements};
+    let conn = connect_or_skip!();
+    // CockroachDB's triggers differ (and arrived late); the suite checks PostgreSQL's.
+    if cockroach(conn.as_ref()).await {
+        return;
+    }
+    conn.execute_all(query(
+        "DROP TABLE IF EXISTS trig_items; DROP FUNCTION IF EXISTS trig_items_fn();
+         CREATE TABLE trig_items (id int PRIMARY KEY, name text, touched int DEFAULT 0)",
+        None,
+    ))
+    .await
+    .unwrap();
+    let create = |bump: i32| ColumnChange::CreateTrigger {
+        name: "trig_items_touch".into(),
+        definition: format!(
+            "CREATE OR REPLACE FUNCTION trig_items_fn() RETURNS trigger LANGUAGE plpgsql AS $$\n\
+             BEGIN\n  NEW.touched := OLD.touched + {bump};\n  RETURN NEW;\nEND;\n$$;\n\
+             CREATE TRIGGER trig_items_touch BEFORE UPDATE ON trig_items\n  FOR EACH ROW EXECUTE FUNCTION trig_items_fn();"
+        ),
+    };
+    let table = conn.qualified(None, "trig_items");
+    let run = |changes: Vec<ColumnChange>| {
+        let sql = statements(conn.dialect(), None, &table, &changes).unwrap();
+        apply_on(conn.as_ref(), sql)
+    };
+    run(vec![create(1)]).await.unwrap();
+    run(vec![
+        ColumnChange::DropTrigger {
+            name: "trig_items_touch".into(),
+        },
+        create(10),
+    ])
+    .await
+    .unwrap();
+    // Several statements in one text: values come back as text.
+    let rows = conn
+        .execute_all(query(
+            "INSERT INTO trig_items (id, name) VALUES (1, 'a');
+             UPDATE trig_items SET name = 'ğ' WHERE id = 1;
+             SELECT touched FROM trig_items",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(rows.last().unwrap().rows, [vec![Value::Text("10".into())]]);
+    let structure = conn.table_structure(None, "trig_items").await.unwrap();
+    assert_eq!(structure.triggers.len(), 1);
+    assert_eq!(structure.triggers[0].name, "trig_items_touch");
+
+    // A definition that fails leaves the old trigger in place: it all runs in one transaction.
+    let error = run(vec![
+        ColumnChange::DropTrigger {
+            name: "trig_items_touch".into(),
+        },
+        ColumnChange::CreateTrigger {
+            name: "trig_items_touch".into(),
+            definition: "CREATE TRIGGER trig_items_touch BEFORE UPDATE ON trig_items FOR EACH ROW EXECUTE FUNCTION no_such_fn()".into(),
+        },
+    ])
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("Nothing was changed"), "{error}");
+    let structure = conn.table_structure(None, "trig_items").await.unwrap();
+    assert_eq!(structure.triggers.len(), 1);
+    conn.execute_all(query(
+        "DROP TABLE trig_items; DROP FUNCTION trig_items_fn()",
+        None,
+    ))
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn several_statements_inside_an_open_transaction_keep_it_usable() {
+    let conn = connect_or_skip!();
+    conn.execute(query("BEGIN", None)).await.unwrap();
+    // Preparing this text would fail and abort the transaction; it is not tried.
+    let sets = conn
+        .execute_all(query("SELECT 1 AS a; SELECT 'ğ' AS b", None))
+        .await
+        .unwrap();
+    assert_eq!(sets.len(), 2);
+    let one = conn.execute(query("SELECT 3 AS c", None)).await.unwrap();
+    assert_eq!(one.rows, [vec![Value::Int(3)]]);
+    conn.execute(query("COMMIT", None)).await.unwrap();
+}

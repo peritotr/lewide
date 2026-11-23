@@ -289,6 +289,11 @@ impl DocumentStore for MongoConnection {
 
     async fn find(&self, request: FindRequest) -> Result<FindPage> {
         let started = Instant::now();
+        if let Some(stages) = text::parse_pipeline(request.pipeline.as_deref().unwrap_or_default())
+            .map_err(|e| document::invalid_text(TextPart::Pipeline, e.message, e.position))?
+        {
+            return self.aggregate(&request, stages, started).await;
+        }
         let filter = parse(TextPart::Filter, request.filter.as_deref())?;
         let projection = parse(TextPart::Projection, request.projection.as_deref())?;
         let sort = parse(TextPart::Sort, request.sort.as_deref())?;
@@ -399,6 +404,51 @@ impl DocumentStore for MongoConnection {
                 })
             }
         }
+    }
+}
+
+impl MongoConnection {
+    /// One page of an aggregation: the pipeline, then `$skip` and `$limit`
+    /// for the page. Documents a stage builds may have no `_id`.
+    async fn aggregate(
+        &self,
+        request: &FindRequest,
+        mut stages: Vec<Document>,
+        started: Instant,
+    ) -> Result<FindPage> {
+        let limit = request.limit.clamp(1, MAX_PAGE) as usize;
+        if request.skip > 0 {
+            stages.push(doc! { "$skip": request.skip as i64 });
+        }
+        // One document more than asked for tells whether another page exists.
+        stages.push(doc! { "$limit": limit as i64 + 1 });
+        let mut cursor = self
+            .collection(&request.database, &request.collection)
+            .aggregate(stages)
+            .await
+            .map_err(op_err)?;
+        let mut documents = Vec::new();
+        let mut has_more = false;
+        while let Some(document) = cursor.try_next().await.map_err(op_err)? {
+            if documents.len() == limit {
+                has_more = true;
+                break;
+            }
+            let mut bytes = Vec::new();
+            document
+                .to_writer(&mut bytes)
+                .map_err(|e| Error::Query(format!("a document could not be encoded: {e}")))?;
+            documents.push(FoundDocument {
+                size_bytes: bytes.len() as u64,
+                document: Bson::Document(document).into_canonical_extjson(),
+            });
+        }
+        Ok(FindPage {
+            documents,
+            skip: request.skip,
+            has_more,
+            elapsed_ms: started.elapsed().as_millis() as u64,
+        })
     }
 }
 

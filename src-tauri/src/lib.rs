@@ -1548,6 +1548,7 @@ fn ai_cancel(state: State<'_, AppState>, request_id: String) {
 macro_rules! handlers {
     () => {
         tauri::generate_handler![
+            app_ready,
             list_drivers,
             open_connection,
             list_saved_connections,
@@ -1615,6 +1616,42 @@ macro_rules! handlers {
     };
 }
 
+// ---- Startup ----
+
+/// Whether the main window has said it is ready; until then the loading
+/// screen may be shown.
+#[derive(Default)]
+struct Startup {
+    ready: std::sync::atomic::AtomicBool,
+}
+
+/// How long startup may take before the loading screen appears (00-brand).
+const SPLASH_AFTER: std::time::Duration = std::time::Duration::from_millis(300);
+/// The main window is shown after this even if it never says it is ready,
+/// so a failure in the interface cannot leave the app without a window.
+const SHOW_ANYWAY_AFTER: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// The interface has rendered: show the main window and close the loading screen.
+#[tauri::command]
+fn app_ready<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    show_main(&app);
+}
+
+fn show_main<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(startup) = app.try_state::<Startup>() {
+        startup
+            .ready
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.show();
+        let _ = main.set_focus();
+    }
+    if let Some(splash) = app.get_webview_window("splash") {
+        let _ = splash.close();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1635,6 +1672,25 @@ pub fn run() {
                 ai,
                 dbclient_ai::http_client()?,
             ));
+            app.manage(Startup::default());
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(SPLASH_AFTER);
+                let ready = |h: &tauri::AppHandle| {
+                    h.state::<Startup>()
+                        .ready
+                        .load(std::sync::atomic::Ordering::SeqCst)
+                };
+                if !ready(&handle)
+                    && let Some(splash) = handle.get_webview_window("splash")
+                {
+                    let _ = splash.show();
+                }
+                std::thread::sleep(SHOW_ANYWAY_AFTER - SPLASH_AFTER);
+                if !ready(&handle) {
+                    show_main(&handle);
+                }
+            });
             Ok(())
         })
         .invoke_handler(handlers!())
@@ -2058,6 +2114,44 @@ mod ipc_tests {
             json!({ "session": session, "changes": { "table": "people", "changes": [
                 { "kind": "drop", "column": "age" },
                 { "kind": "modify", "from": { "name": "full_name", "type_name": "TEXT", "nullable": false }, "to": { "name": "name", "type_name": "TEXT", "nullable": false } },
+            ] } }),
+        );
+
+        // A trigger is created from its text, then replaced: dropped and created again.
+        let trigger = |body: &str| {
+            json!({ "table": "people", "changes": [
+                { "kind": "create_trigger", "name": "people_audit", "definition": format!(
+                    "CREATE TRIGGER people_audit AFTER UPDATE ON people FOR EACH ROW\nBEGIN\n  {body}\nEND;"
+                ) },
+            ] })
+        };
+        ok(
+            &w,
+            "apply_structure",
+            json!({ "session": session, "changes": trigger("SELECT 1;") }),
+        );
+        let mut replace = trigger("SELECT 2; SELECT 3;");
+        replace["changes"]
+            .as_array_mut()
+            .unwrap()
+            .insert(0, json!({ "kind": "drop_trigger", "name": "people_audit" }));
+        ok(
+            &w,
+            "apply_structure",
+            json!({ "session": session, "changes": replace }),
+        );
+        let after = ok(
+            &w,
+            "table_structure",
+            json!({ "session": session, "name": "people", "namespace": null }),
+        );
+        let definition = after["triggers"][0]["definition"].as_str().unwrap();
+        assert!(definition.contains("SELECT 2; SELECT 3;"), "{definition}");
+        ok(
+            &w,
+            "apply_structure",
+            json!({ "session": session, "changes": { "table": "people", "changes": [
+                { "kind": "drop_trigger", "name": "people_audit" },
             ] } }),
         );
 

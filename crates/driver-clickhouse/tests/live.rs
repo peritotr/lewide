@@ -505,3 +505,105 @@ async fn route_and_close() {
     assert!(!conn.is_alive().await);
     assert!(matches!(conn.ping().await, Err(Error::ConnectionLost(_))));
 }
+
+#[tokio::test]
+async fn changes_columns_with_alter_table() {
+    use dbclient_core::structure::{ColumnChange, ColumnDef, apply_on, statements};
+    let conn = connect_or_skip!();
+    fresh_database(conn.as_ref(), "t_alter").await;
+    conn.execute_all(query(
+        "CREATE TABLE t_alter.items (id UInt64, note Nullable(String), price Float64 DEFAULT 0, old String)
+           ENGINE = MergeTree ORDER BY id;
+         INSERT INTO t_alter.items (id, note, price, old) VALUES (1, 'ılık', 2.5, 'x'), (2, NULL, 3, 'y')",
+        None,
+    ))
+    .await
+    .unwrap();
+    let def = |name: &str, ty: &str, nullable: bool, default: Option<&str>| ColumnDef {
+        name: name.into(),
+        type_name: ty.into(),
+        nullable,
+        default_value: default.map(str::to_owned),
+    };
+    let table = conn.qualified(Some("t_alter"), "items");
+    let changes = [
+        ColumnChange::Drop {
+            column: "old".into(),
+        },
+        ColumnChange::Modify {
+            from: def("note", "Nullable(String)", true, None),
+            to: def("remark", "Nullable(String)", true, Some("'none'")),
+        },
+        ColumnChange::Modify {
+            from: def("price", "Float64", false, Some("0")),
+            to: def("price", "Decimal(18, 2)", false, None),
+        },
+        ColumnChange::Add {
+            column: def("qty", "UInt32", false, Some("1")),
+        },
+    ];
+    let sql = statements(SqlDialect::ClickHouse, Some("t_alter"), &table, &changes).unwrap();
+    apply_on(conn.as_ref(), sql).await.unwrap();
+
+    let columns = conn
+        .describe_object(Some("t_alter"), "items")
+        .await
+        .unwrap()
+        .columns;
+    let shown: Vec<_> = columns
+        .iter()
+        .map(|c| {
+            (
+                c.name.as_str(),
+                c.type_name.as_deref().unwrap_or_default(),
+                c.nullable,
+                c.default_value.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("id", "UInt64", false, None),
+            ("remark", "Nullable(String)", true, Some("'none'")),
+            ("price", "Decimal(18, 2)", false, None),
+            ("qty", "UInt32", false, Some("1")),
+        ]
+    );
+    let rows = conn
+        .execute(query(
+            "SELECT remark, toString(price), qty FROM t_alter.items ORDER BY id",
+            None,
+        ))
+        .await
+        .unwrap()
+        .rows;
+    assert_eq!(
+        rows,
+        [
+            vec![
+                Value::Text("ılık".into()),
+                Value::Text("2.5".into()),
+                Value::Int(1)
+            ],
+            vec![Value::Null, Value::Text("3".into()), Value::Int(1)],
+        ]
+    );
+
+    // A failure after the first statement says what was already applied.
+    let bad = [
+        ColumnChange::Add {
+            column: def("extra", "UInt8", false, None),
+        },
+        ColumnChange::Add {
+            column: def("broken", "NoSuchType", false, None),
+        },
+    ];
+    let sql = statements(SqlDialect::ClickHouse, Some("t_alter"), &table, &bad).unwrap();
+    let error = apply_on(conn.as_ref(), sql).await.unwrap_err().to_string();
+    assert!(error.contains("statement 2 of 2"), "{error}");
+    assert!(error.contains("cannot be rolled back"), "{error}");
+    conn.execute(query("DROP DATABASE t_alter", None))
+        .await
+        .unwrap();
+}

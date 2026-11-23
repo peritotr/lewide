@@ -65,6 +65,50 @@ pub fn parse_document(text: &str) -> Result<Option<Document>, TextError> {
     }
 }
 
+/// Parses an aggregation pipeline: a list of stage documents. `None` when the text is blank.
+pub fn parse_pipeline(text: &str) -> Result<Option<Vec<Document>>, TextError> {
+    let mut parser = Parser {
+        chars: text.chars().collect(),
+        at: 0,
+    };
+    parser.skip_space();
+    if parser.peek().is_none() {
+        return Ok(None);
+    }
+    // A single stage may be written without the brackets.
+    let single = parser.peek() == Some('{');
+    if !single && parser.peek() != Some('[') {
+        return Err(parser.error("a pipeline is expected: [ { $match: … }, … ]"));
+    }
+    let start = parser.at;
+    let value = if single {
+        parser.object()?.0
+    } else {
+        parser.array()?
+    };
+    parser.skip_space();
+    if parser.peek().is_some() {
+        return Err(parser.error(if single {
+            "nothing is expected after the closing }"
+        } else {
+            "nothing is expected after the closing ]"
+        }));
+    }
+    let stages = match value {
+        Bson::Document(stage) => vec![Bson::Document(stage)],
+        Bson::Array(stages) => stages,
+        _ => return Err(parser.error_at(start, "a pipeline is expected")),
+    };
+    stages
+        .into_iter()
+        .map(|stage| match stage {
+            Bson::Document(stage) => Ok(stage),
+            _ => Err(parser.error_at(start, "every stage is a document: { $stage: … }")),
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
+}
+
 /// Turns one value in Extended JSON (as the interface holds an `_id`) into BSON.
 pub fn value_from_json(value: &serde_json::Value) -> Result<Bson, String> {
     Bson::try_from(value.clone()).map_err(|e| e.to_string())
@@ -561,6 +605,32 @@ mod tests {
             parse(r#"{"name": {"$regex": "^a", "$options": "i"}, "t": {"$type": "date"}}"#),
             doc! {"name": {"$regex": "^a", "$options": "i"}, "t": {"$type": "date"}}
         );
+    }
+
+    #[test]
+    fn reads_a_pipeline_with_or_without_brackets() {
+        let stages = parse_pipeline(
+            "[ { $match: { qty: { $gt: 1 } } }, { $group: { _id: '$city', n: { $sum: 1 } } }, ]",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(stages.len(), 2);
+        assert_eq!(
+            stages[1]
+                .get_document("$group")
+                .unwrap()
+                .get_str("_id")
+                .unwrap(),
+            "$city"
+        );
+        assert_eq!(parse_pipeline("{ $limit: 3 }").unwrap().unwrap().len(), 1);
+        assert_eq!(parse_pipeline("  ").unwrap(), None);
+        assert_eq!(
+            parse_pipeline("[1]").unwrap_err().message,
+            "every stage is a document: { $stage: … }"
+        );
+        assert_eq!(parse_pipeline("[] x").unwrap_err().position, Some(4));
+        assert!(parse_pipeline("$match").is_err());
     }
 
     #[test]
