@@ -1,4 +1,4 @@
-import { ArrowRight, Bookmark, ChevronDown, ChevronRight, Circle, Database, Layers, Plus, Search, Table, Terminal, TriangleAlert, PanelLeftOpen } from "lucide-react";
+import { ArrowRight, Bookmark, ChevronDown, ChevronRight, Circle, Database, Ellipsis, Layers, Plus, Search, Table, Terminal, TriangleAlert, PanelLeftOpen } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, compactCount, type GraphLabel } from "../lib/api";
 import { typeOf } from "../lib/types";
@@ -138,7 +138,7 @@ function ContextMenu({ conn, at, close }: { conn: Conn; at: Floating; close(): v
       data-floating
       role="menu"
       className="fixed z-40 w-[220px] border border-line bg-panel py-s1"
-      style={{ left: at.x, top: Math.min(at.y, window.innerHeight - 180), boxShadow: "var(--shadow-md)" }}
+      style={{ left: at.x, top: Math.min(at.y, window.innerHeight - 210), boxShadow: "var(--shadow-md)" }}
     >
       {/* One item, never both. */}
       <button type="button" role="menuitem" className={item} onClick={act(() => (connected ? disconnect(conn.id) : connect(conn.id)))}>
@@ -154,9 +154,32 @@ function ContextMenu({ conn, at, close }: { conn: Conn; at: Floating; close(): v
       <button type="button" role="menuitem" className={item} onClick={act(() => void duplicate(conn))}>
         {t("Duplicate")}
       </button>
+      <button type="button" role="menuitem" className={item} onClick={act(() => openDialog({ kind: "connections-file", mode: "export", ids: [conn.id] }))}>
+        {t("Export…")}
+      </button>
       <i className="my-s1 block h-px bg-line" />
       <button type="button" role="menuitem" className={`${item} text-danger hover:!bg-danger-tint`} onClick={act(() => openDialog({ kind: "remove", connId: conn.id }))}>
         {t("Remove…")}{" "}<span className="font-mono text-[11px]">⌫</span>
+      </button>
+    </div>
+  );
+}
+
+// Not drawn in the design: moving saved connections to and from a file.
+function ConnectionsMenu({ at, close }: { at: { x: number; y: number }; close(): void }) {
+  const item = "flex h-[26px] w-full items-center px-s3 text-left hover:bg-accent-tint disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent";
+  const empty = useApp((s) => s.connections.length === 0);
+  const show = (mode: "export" | "import") => () => {
+    close();
+    openDialog({ kind: "connections-file", mode });
+  };
+  return (
+    <div data-floating role="menu" className="fixed z-40 w-[220px] border border-line bg-panel py-s1" style={{ left: at.x, top: at.y, boxShadow: "var(--shadow-md)" }}>
+      <button type="button" role="menuitem" className={item} disabled={empty} onClick={show("export")}>
+        {t("Export connections…")}
+      </button>
+      <button type="button" role="menuitem" className={item} onClick={show("import")}>
+        {t("Import connections…")}
       </button>
     </div>
   );
@@ -201,12 +224,14 @@ export function Sidebar() {
   const [filter, setFilter] = useState("");
   const [menu, setMenu] = useState<Floating | null>(null);
   const [details, setDetails] = useState<Floating | null>(null);
+  const [fileMenu, setFileMenu] = useState<{ x: number; y: number } | null>(null);
   const needle = filter.trim().toLowerCase();
   const active = connections.find((c) => c.id === activeId) ?? null;
   const find = (id?: string) => connections.find((c) => c.id === id);
 
   useDismiss(!!menu, () => setMenu(null));
   useDismiss(!!details, () => setDetails(null));
+  useDismiss(!!fileMenu, () => setFileMenu(null));
 
   /** Double-click or Enter: connect, or show why the last attempt failed. */
   function open(conn: Conn, row: HTMLElement) {
@@ -245,9 +270,21 @@ export function Sidebar() {
 
       <div className="flex items-center justify-between py-s1 pr-s2 pl-s3">
         <span className="label">{t("Connections")}</span>
-        <IconButton label={`${t("New connection")} (${isMac ? "⌘N" : "Ctrl+N"})`} size={22} onClick={() => openDialog({ kind: "picker" })}>
-          <Plus size={14} />
-        </IconButton>
+        <span className="flex items-center" data-floating>
+          <IconButton
+            label={t("Export or import connections")}
+            size={22}
+            onClick={(e) => {
+              const box = e.currentTarget.getBoundingClientRect();
+              setFileMenu(fileMenu ? null : { x: box.left, y: box.bottom + 4 });
+            }}
+          >
+            <Ellipsis size={14} />
+          </IconButton>
+          <IconButton label={`${t("New connection")} (${isMac ? "⌘N" : "Ctrl+N"})`} size={22} onClick={() => openDialog({ kind: "picker" })}>
+            <Plus size={14} />
+          </IconButton>
+        </span>
       </div>
       {connections.length === 0 && (
         <p className="px-s3 py-s1 text-[12px] leading-[1.5] text-text-3">{t("No connections yet. Saved connections are listed here.")}</p>
@@ -317,6 +354,7 @@ export function Sidebar() {
         )}
       </div>
 
+      {fileMenu && <ConnectionsMenu at={fileMenu} close={() => setFileMenu(null)} />}
       {menu && find(menu.connId) && <ContextMenu conn={find(menu.connId)!} at={menu} close={() => setMenu(null)} />}
       {details && find(details.connId) && (
         <ErrorPopover

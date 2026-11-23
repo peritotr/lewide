@@ -103,6 +103,8 @@ export const updateTurn = patchTurn;
 export const clearThread = (key: string) => set((s) => ({ threads: { ...s.threads, [key]: [] } }));
 
 const running = new Map<string, () => void>();
+/** Turns the user stopped: text and results that still arrive for them are ignored. */
+const stopped = new Set<number>();
 let nextTurn = 1;
 
 export interface AskInput {
@@ -141,20 +143,34 @@ export function ask(key: string, input: AskInput) {
       history,
     },
     (text) => {
+      if (stopped.has(id)) return;
       const current = (get().threads[key] ?? []).find((x) => x.id === id);
       if (current) patchTurn(key, id, { text: current.text + text });
     },
   );
-  running.set(key, call.stop);
+  // Stop takes effect on screen at once; the server may still be reading the
+  // structure or waiting for the provider, and whatever it sends later is dropped.
+  running.set(key, () => {
+    stopped.add(id);
+    running.delete(key);
+    call.stop();
+    patchTurn(key, id, { state: "stopped", endedAt: Date.now() });
+  });
   call.done
-    .then((completion) => patchTurn(key, id, { state: "done", text: completion.text, usage: completion.usage, model: completion.model, endedAt: Date.now() }))
+    .then((completion) => {
+      if (!stopped.has(id)) patchTurn(key, id, { state: "done", text: completion.text, usage: completion.usage, model: completion.model, endedAt: Date.now() });
+    })
     .catch((e) => {
+      if (stopped.has(id)) return;
       const error = aiError(e);
       // Stopping keeps what had arrived.
       if (error.reason === "cancelled") patchTurn(key, id, { state: "stopped", endedAt: Date.now() });
       else patchTurn(key, id, { state: "error", error, endedAt: Date.now() });
     })
-    .finally(() => running.delete(key));
+    .finally(() => {
+      if (stopped.delete(id)) return;
+      running.delete(key);
+    });
 }
 
 export const stopAsking = (key: string) => running.get(key)?.();

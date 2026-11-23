@@ -675,6 +675,10 @@ export interface Backend {
   /** `connection.config` carries the passwords as entered; an empty id creates a new entry. */
   saveConnection(connection: SavedConnection, options: SaveOptions): Promise<SavedConnection>;
   deleteSaved(id: string): Promise<void>;
+  /** Writes saved connections to a file without passwords or API keys; none given writes all. Answers how many. */
+  exportConnections(ids: string[], path: string): Promise<number>;
+  /** Adds the connections of an exported file as new ones. */
+  importConnections(path: string): Promise<SavedConnection[]>;
   connectSaved(id: string, answers?: ConnectAnswers): Promise<number>;
   /** Opens and closes a connection to check the settings. */
   testConnection(config: ConnectionConfig, savedId?: string): Promise<TestResult>;
@@ -731,6 +735,8 @@ const tauriBackend: Backend = {
   listSaved: () => invoke("list_saved_connections"),
   saveConnection: (connection, options) => invoke("save_connection", { connection, ...options }),
   deleteSaved: (id) => invoke("delete_saved_connection", { id }),
+  exportConnections: (ids, path) => invoke("export_connections", { ids, path }),
+  importConnections: (path) => invoke("import_connections", { path }),
   connectSaved: (id, answers = {}) =>
     invoke("connect_saved", {
       id,
@@ -814,6 +820,8 @@ export const api: Backend = {
   listSaved: () => backend.listSaved(),
   saveConnection: (connection, options) => backend.saveConnection(connection, options),
   deleteSaved: (id) => backend.deleteSaved(id),
+  exportConnections: (ids, path) => backend.exportConnections(ids, path),
+  importConnections: (path) => backend.importConnections(path),
   connectSaved: (id, answers) => backend.connectSaved(id, answers),
   testConnection: (config, savedId) => backend.testConnection(config, savedId),
 };

@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use dbclient_core::{ConnectionConfig, Error, Result, SshAuth, SshConfig};
 use dbclient_store::{
-    ConnectionStore, Environment, Keep, KeyringSecrets, MemorySecrets, SavedConnection,
-    SecretFlags, SecretPolicy, SecretStore, Secrets,
+    ConnectionFile, ConnectionStore, Environment, Keep, KeyringSecrets, MemorySecrets,
+    SavedConnection, SecretFlags, SecretPolicy, SecretStore, Secrets,
 };
 
 /// A settings file of its own per test, removed when the test ends.
@@ -343,4 +343,49 @@ fn system_credential_store_round_trip() {
     secrets.delete(&id).unwrap();
     assert_eq!(secrets.get(&id).unwrap(), None);
     secrets.delete(&id).unwrap();
+}
+
+#[test]
+fn exported_connections_carry_no_secrets_and_import_as_new_ones() {
+    let file = TempFile::new("export");
+    let (here, _) = store(&file);
+    let mut config = full_config();
+    config.params.insert("apiKey".into(), "es-key".into());
+    config.params.insert("authSource".into(), "admin".into());
+    let saved = here
+        .save(connection("acme-prod", config), Keep::ALL, false)
+        .unwrap();
+    here.save(
+        connection("local", ConnectionConfig::default()),
+        Keep::NONE,
+        false,
+    )
+    .unwrap();
+
+    let exported = here.export(std::slice::from_ref(&saved.id)).unwrap();
+    assert_eq!(exported.connections.len(), 1);
+    let json = serde_json::to_string(&exported).unwrap();
+    for secret in ["db-secret", "key-secret", "es-key"] {
+        assert!(!json.contains(secret), "{json}");
+    }
+    assert!(json.contains("authSource") && json.contains("bastion.internal"));
+    assert_eq!(here.export(&[]).unwrap().connections.len(), 2);
+
+    // Read on another computer: a new id, and the passwords are asked for.
+    let other = TempFile::new("import");
+    let (elsewhere, _) = store(&other);
+    let back: ConnectionFile = serde_json::from_str(&json).unwrap();
+    let added = elsewhere.import(back).unwrap();
+    assert_eq!(added.len(), 1);
+    assert_ne!(added[0].id, saved.id);
+    assert_eq!(added[0].name, "acme-prod");
+    assert_eq!(added[0].requires, saved.requires);
+    assert_eq!(added[0].secrets, SecretPolicy::Ask);
+    assert_eq!(elsewhere.list().unwrap(), added);
+
+    let newer = ConnectionFile {
+        lewide_connections: 99,
+        connections: Vec::new(),
+    };
+    assert!(matches!(elsewhere.import(newer), Err(Error::Storage(_))));
 }

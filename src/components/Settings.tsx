@@ -522,8 +522,11 @@ function ProviderBlock({ provider, kind, onSaved, onCancel }: { provider: Provid
       await loadProviders();
       onSaved?.();
     } catch (e) {
-      // A key that does not work is not kept.
-      if (saved && typed !== undefined) await ai.saveProvider(saved, "").catch(() => {});
+      // A provider being added that fails its first test is not kept: each
+      // try would otherwise leave another empty row. An existing one only
+      // loses the key that does not work.
+      if (saved && !provider) await ai.deleteProvider(saved.id).catch(() => {});
+      else if (saved && typed !== undefined) await ai.saveProvider(saved, "").catch(() => {});
       await loadProviders();
       setTest({ state: "failed", message: aiError(e).message });
     }

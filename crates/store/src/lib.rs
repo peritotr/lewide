@@ -178,6 +178,22 @@ struct FileContents {
     connections: Vec<SavedConnection>,
 }
 
+/// Connections written to a file to be read on another computer, or kept as
+/// a copy. Passwords are never in it: they stay in this computer's credential
+/// store, and an imported connection asks for them when it is first opened.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConnectionFile {
+    /// Names what the file is and its format version.
+    pub lewide_connections: u32,
+    pub connections: Vec<SavedConnection>,
+}
+
+const EXPORT_VERSION: u32 = 1;
+
+/// Driver options that carry a credential (Elasticsearch's API key); they are
+/// left out of an exported file like the passwords.
+const SECRET_PARAMS: &[&str] = &["apiKey"];
+
 pub struct ConnectionStore {
     path: PathBuf,
     secrets: Box<dyn SecretStore>,
@@ -332,6 +348,55 @@ impl ConnectionStore {
         }
         let json = serde_json::to_string(secrets).map_err(|e| Error::Storage(e.to_string()))?;
         self.secrets.set(id, &json)
+    }
+
+    /// The connections with these ids (all of them when `ids` is empty),
+    /// ready to be written to a file: no passwords, no API keys.
+    pub fn export(&self, ids: &[String]) -> Result<ConnectionFile> {
+        let connections = self
+            .list()?
+            .into_iter()
+            .filter(|c| ids.is_empty() || ids.contains(&c.id))
+            .map(|mut c| {
+                for key in SECRET_PARAMS {
+                    c.config.params.remove(*key);
+                }
+                c.secrets = policy(c.requires, &Secrets::default());
+                c
+            })
+            .collect();
+        Ok(ConnectionFile {
+            lewide_connections: EXPORT_VERSION,
+            connections,
+        })
+    }
+
+    /// Adds the file's connections as new ones, beside those already saved.
+    /// Nothing is stored in the credential store: a connection that needs a
+    /// password asks for it when it is opened.
+    pub fn import(&self, file: ConnectionFile) -> Result<Vec<SavedConnection>> {
+        if file.lewide_connections > EXPORT_VERSION {
+            return Err(Error::Storage(
+                "the file was written by a newer version of the application".into(),
+            ));
+        }
+        let _writing = self.lock();
+        let mut all = self.list()?;
+        let added: Vec<SavedConnection> = file
+            .connections
+            .into_iter()
+            .map(|mut c| {
+                c.id = uuid::Uuid::new_v4().to_string();
+                // A file edited by hand may carry a password; it is not kept.
+                Secrets::default().clear(&mut c.config);
+                c.secrets = policy(c.requires, &Secrets::default());
+                c.colour = c.colour.clamp(1, 4);
+                c
+            })
+            .collect();
+        all.extend(added.iter().cloned());
+        self.write(all)?;
+        Ok(added)
     }
 
     /// Records the SSH host key fingerprint the user approved for this connection.

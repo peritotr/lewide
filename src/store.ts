@@ -214,6 +214,8 @@ export type Dialog =
   | { kind: "unknown-host"; connId: string; key: UnknownHostKey; answers: ConnectAnswers }
   | { kind: "host-changed"; connId: string; change: HostKeyChanged }
   | { kind: "remove"; connId: string }
+  /** Saved connections written to a file, or read from one. `ids` preselects connections to export. */
+  | { kind: "connections-file"; mode: "export" | "import"; ids?: string[] }
   /** The statements pending row changes would run, for review before applying. */
   | { kind: "apply-changes"; tabId: string; statements: string[] }
   /** S07: the ALTER TABLE statements pending column changes would run. */

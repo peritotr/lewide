@@ -21,7 +21,8 @@ use dbclient_core::{
     TableStructure, Value,
 };
 use dbclient_store::{
-    ConnectionStore, Keep, KeyringSecrets, QueryStore, SavedConnection, SavedQuery, Secrets,
+    ConnectionFile, ConnectionStore, Keep, KeyringSecrets, QueryStore, SavedConnection, SavedQuery,
+    Secrets,
 };
 use tauri::{Manager, State};
 use tokio::sync::RwLock;
@@ -190,6 +191,32 @@ async fn save_connection(
         cache.insert(saved.id.clone(), typed);
     }
     Ok(saved)
+}
+
+/// Writes saved connections to a file, without passwords or API keys; an
+/// empty `ids` writes all of them. Answers how many were written.
+#[tauri::command]
+async fn export_connections(
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+    path: String,
+) -> Result<usize, Error> {
+    let file = state.with_store(move |store| store.export(&ids)).await?;
+    let json = serde_json::to_string_pretty(&file).map_err(|e| Error::File(e.to_string()))?;
+    std::fs::write(&path, json).map_err(|e| Error::File(format!("{path}: {e}")))?;
+    Ok(file.connections.len())
+}
+
+/// Adds the connections of an exported file as new saved connections.
+#[tauri::command]
+async fn import_connections(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<Vec<SavedConnection>, Error> {
+    let text = std::fs::read_to_string(&path).map_err(|e| Error::File(format!("{path}: {e}")))?;
+    let file: ConnectionFile = serde_json::from_str(&text)
+        .map_err(|_| Error::File(format!("{path} is not a file of exported connections")))?;
+    state.with_store(move |store| store.import(file)).await
 }
 
 #[tauri::command]
@@ -1425,6 +1452,36 @@ async fn ai_ask(
     ask: AiAsk,
     on_event: tauri::ipc::Channel<StreamEvent>,
 ) -> Result<Completion, Error> {
+    // Registered first, so Stop works while the structure is still being read;
+    // a Stop that arrived even earlier has left its token here already.
+    let cancel = state
+        .ai_running
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .entry(ask.request_id.clone())
+        .or_default()
+        .clone();
+    let result = tokio::select! {
+        _ = cancel.cancelled() => Err(dbclient_core::Error::Ai {
+            reason: "cancelled".into(),
+            message: "stopped".into(),
+        }),
+        result = ask_with(&state, &ask, &cancel, on_event) => result,
+    };
+    state
+        .ai_running
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .remove(&ask.request_id);
+    result
+}
+
+async fn ask_with(
+    state: &AppState,
+    ask: &AiAsk,
+    cancel: &CancellationToken,
+    on_event: tauri::ipc::Channel<StreamEvent>,
+) -> Result<Completion, Error> {
     let provider_id = ask.provider_id.clone();
     let (provider, key) = state
         .with_ai(move |store| store.resolve(provider_id.as_deref()))
@@ -1457,42 +1514,33 @@ async fn ai_ask(
         schema: &schema,
     };
     let request = prompt::build(&database, &ask.task, ask.sql.as_deref(), &ask.history);
-
-    let cancel = CancellationToken::new();
-    state
-        .ai_running
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .insert(ask.request_id.clone(), cancel.clone());
-    let result = dbclient_ai::stream_chat(
+    dbclient_ai::stream_chat(
         &state.http,
         &provider,
         key.as_deref(),
         &request,
-        &cancel,
+        cancel,
         // A closed channel means the interface stopped listening; the reply is dropped.
         |event| {
             let _ = on_event.send(event);
         },
     )
-    .await;
-    state
-        .ai_running
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .remove(&ask.request_id);
-    result
+    .await
 }
 
 #[tauri::command]
 fn ai_cancel(state: State<'_, AppState>, request_id: String) {
-    if let Some(cancel) = state
-        .ai_running
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .get(&request_id)
-    {
-        cancel.cancel();
+    let mut running = state.ai_running.lock().unwrap_or_else(|p| p.into_inner());
+    match running.get(&request_id) {
+        Some(cancel) => cancel.cancel(),
+        // The request has not registered yet (or has ended): a token cancelled
+        // in advance makes it stop as soon as it starts. Only ids the interface
+        // made reach here, so the map cannot grow from outside.
+        None => {
+            let cancel = CancellationToken::new();
+            cancel.cancel();
+            running.insert(request_id, cancel);
+        }
     }
 }
 
@@ -1505,6 +1553,8 @@ macro_rules! handlers {
             list_saved_connections,
             save_connection,
             delete_saved_connection,
+            export_connections,
+            import_connections,
             connect_saved,
             list_saved_queries,
             save_query,
@@ -1831,6 +1881,23 @@ mod ipc_tests {
                 .unwrap()
                 .len(),
             1
+        );
+        // Written to a file and read back as a second, new connection.
+        let file =
+            std::env::temp_dir().join(format!("lewide-ipc-export-{}.json", std::process::id()));
+        let path = file.to_string_lossy();
+        assert_eq!(
+            ok(&w, "export_connections", json!({ "ids": [], "path": path })),
+            1
+        );
+        let added = ok(&w, "import_connections", json!({ "path": path }));
+        std::fs::remove_file(&file).unwrap();
+        assert_eq!(added[0]["name"], "memory");
+        assert_ne!(added[0]["id"], saved["id"]);
+        ok(
+            &w,
+            "delete_saved_connection",
+            json!({ "id": added[0]["id"] }),
         );
         let session = ok(
             &w,

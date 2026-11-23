@@ -156,6 +156,9 @@ export const demoBackend: Backend = {
     secrets: connection.config.password ? "keychain" : "none",
   }),
   deleteSaved: async () => {},
+  // The demo has no files: export pretends to write, import finds nothing new.
+  exportConnections: async (ids) => ids.length,
+  importConnections: async () => [],
   connectSaved: async (id) => {
     await wait(600);
     return SESSIONS[id] ?? 1;

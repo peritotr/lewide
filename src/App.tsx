@@ -5,6 +5,7 @@ import { ConnectionForm } from "./components/connections/ConnectionForm";
 import { FirstLaunch } from "./components/connections/FirstLaunch";
 import { HostKeyChangedDialog, UnknownHostDialog } from "./components/connections/HostKeyDialogs";
 import { PasswordPrompt, RemoveDialog } from "./components/connections/Prompts";
+import { ConnectionsFileDialog } from "./components/connections/ConnectionsFile";
 import { TypePicker } from "./components/connections/TypePicker";
 import { Button, Dialog, TextInput } from "./components/dialog";
 import { Editor, type EditorHandle, type ErrorMark } from "./components/Editor";
@@ -292,6 +293,8 @@ function Dialogs() {
       return <HostKeyChangedDialog change={dialog.change} onClose={() => openDialog(null)} />;
     case "remove":
       return conn ? <RemoveDialog conn={conn} /> : null;
+    case "connections-file":
+      return <ConnectionsFileDialog mode={dialog.mode} ids={dialog.ids} />;
     case "alter": {
       const tab = useApp.getState().tabs.find((t) => t.id === dialog.tabId);
       const target = connections.find((c) => c.id === tab?.connectionId);
