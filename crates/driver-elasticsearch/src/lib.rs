@@ -13,7 +13,6 @@
 //! once. Query tabs take requests as Kibana's Dev Tools console writes them.
 
 mod query;
-mod tls;
 
 use std::error::Error as _;
 use std::net::IpAddr;
@@ -142,7 +141,7 @@ impl SearchConnection {
             // A redirect would carry the credentials to wherever it points.
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_TIMEOUT)
-            .tls_backend_preconfigured(tls::client_config(&config.tls, host)?);
+            .tls_backend_preconfigured(dbclient_tls::client_config(&config.tls, Some(host))?);
 
         let base = match config.route {
             None => format!("{scheme}://{}", authority(host, Some(port))),

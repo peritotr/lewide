@@ -31,6 +31,7 @@ import { AlterDialog } from "./components/StructureView";
 import { TitleBar } from "./components/TitleBar";
 import { Toolbar } from "./components/Toolbar";
 import { compactCount } from "./lib/api";
+import { formatConsole, formatCypher, languageOf } from "./lib/languages";
 import { dialectOf, type Destructive } from "./lib/sql";
 import {
   activeTab,
@@ -60,6 +61,7 @@ function Workspace({ tab, conn }: { tab: Tab; conn: Conn | null }) {
   // What the last Run executed, for "Run again".
   const lastRun = useRef<RunItem[]>([]);
   const dialect = dialectOf(conn?.driver.id);
+  const language = useMemo(() => languageOf(conn?.driver.id, dialect), [conn?.driver.id, dialect]);
   const production = conn?.environment === "production";
   const lost = conn !== null && conn.session === null && conn.status !== "connecting";
 
@@ -102,7 +104,9 @@ function Workspace({ tab, conn }: { tab: Tab; conn: Conn | null }) {
     const text = editor.current?.text();
     if (!text?.trim()) return;
     try {
-      editor.current?.replaceText(format(text, { language: FORMATTER_LANGUAGE[dialect], keywordCase: usePrefs.getState().uppercaseKeywords ? "upper" : "preserve", tabWidth: usePrefs.getState().tabWidth }));
+      if (language.kind === "console") editor.current?.replaceText(formatConsole(text, usePrefs.getState().tabWidth));
+      else if (language.kind === "cypher") editor.current?.replaceText(formatCypher(text));
+      else editor.current?.replaceText(format(text, { language: FORMATTER_LANGUAGE[language.dialect], keywordCase: usePrefs.getState().uppercaseKeywords ? "upper" : "preserve", tabWidth: usePrefs.getState().tabWidth }));
     } catch {
       // Text the formatter cannot parse is left as it is.
     }
@@ -141,7 +145,7 @@ function Workspace({ tab, conn }: { tab: Tab; conn: Conn | null }) {
     >
       <TabBar />
       <div title={production ? t("Production connection") : undefined} className={production ? "production-band" : ""} />
-      <Toolbar tab={tab} conn={conn} onRun={runAtCaret} onRunSelection={runSelection} onExplain={runExplain} onFormat={formatText} />
+      <Toolbar tab={tab} conn={conn} onRun={runAtCaret} onRunSelection={runSelection} onExplain={language.kind === "sql" ? runExplain : undefined} onFormat={formatText} />
       <div className="flex min-h-0 min-w-0">
       <div className="grid min-h-0 min-w-0 flex-1" style={{ gridTemplateRows: `auto minmax(0,1fr) ${resultsHeight}px` }}>
       {conn === null ? (
@@ -164,8 +168,8 @@ function Workspace({ tab, conn }: { tab: Tab; conn: Conn | null }) {
         <div />
       )}
       <Editor
-        key={`${tab.id}:${dialect}`}
-        dialect={dialect}
+        key={`${tab.id}:${language.kind}:${dialect}`}
+        language={language}
         schema={schema}
         initialText={tab.sql}
         error={errorMark}
@@ -174,7 +178,7 @@ function Workspace({ tab, conn }: { tab: Tab; conn: Conn | null }) {
         onCaret={(line, col) => updateTab(tab.id, { caret: { line, col } })}
         onRun={runAtCaret}
         onRunSelection={runSelection}
-        onExplain={runExplain}
+        onExplain={() => language.kind === "sql" && runExplain()}
       />
       <Results
         tab={tab}

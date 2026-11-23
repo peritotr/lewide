@@ -5,8 +5,6 @@
 //! value as text. That makes any type displayable, including extension and
 //! user-defined ones, and lets several statements run in one request.
 
-mod tls;
-
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -91,7 +89,7 @@ impl Driver for PostgresDriver {
             }
             TlsMode::Verify | TlsMode::Insecure => {
                 pg.ssl_mode(SslMode::Require);
-                let tls = MakeRustlsConnect::new(tls::client_config(&config.tls)?);
+                let tls = MakeRustlsConnect::new(dbclient_tls::client_config(&config.tls, None)?);
                 let (client, connection) = pg.connect(tls.clone()).await.map_err(connect_err)?;
                 tokio::spawn(connection);
                 (client, Some(tls))

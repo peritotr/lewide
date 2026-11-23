@@ -12,7 +12,6 @@
 //! a database's tables live in its `iox` schema.
 
 mod split;
-mod tls;
 
 use std::error::Error as _;
 use std::net::IpAddr;
@@ -128,7 +127,7 @@ impl InfluxDbConnection {
             // Given even when the connection is not encrypted: left to itself,
             // reqwest builds a TLS setup from a process-wide rustls provider
             // that nothing guarantees has been chosen.
-            .tls_backend_preconfigured(tls::client_config(&config.tls, host)?);
+            .tls_backend_preconfigured(dbclient_tls::client_config(&config.tls, Some(host))?);
 
         let base = match config.route {
             None => format!("{scheme}://{}", authority(host, Some(port))),

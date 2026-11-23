@@ -1083,10 +1083,12 @@ export async function saveTabQuery(tabId: string, name: string): Promise<string 
   const tab = get().tabs.find((t) => t.id === tabId);
   if (!tab?.connectionId) return t("Choose a connection for this tab first.");
   try {
-    const saved = await api.saveQuery({ id: tab.savedQueryId ?? "", connection_id: tab.connectionId, name, sql: tab.sql });
+    // A graph tab saves its Cypher; the store keeps it in the same field as SQL.
+    const text = (tab: Tab | undefined) => (tab?.graph ? tab.graph.text : tab?.sql);
+    const saved = await api.saveQuery({ id: tab.savedQueryId ?? "", connection_id: tab.connectionId, name, sql: text(tab) ?? "" });
     const latest = get().tabs.find((t) => t.id === tabId);
     // Typing during the save keeps the tab marked as changed.
-    patchTab(tabId, { savedQueryId: saved.id, title: saved.name, dirty: latest?.sql !== saved.sql });
+    patchTab(tabId, { savedQueryId: saved.id, title: saved.name, dirty: text(latest) !== saved.sql });
     await loadSavedQueries(tab.connectionId);
     return null;
   } catch (e) {
@@ -1133,7 +1135,7 @@ export function openGraph(connectionId: string, text = "MATCH (a)-[r]->(b) RETUR
   set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tab.id, activeConnectionId: connectionId }));
 }
 
-export const setGraphText = (tabId: string, text: string) => patchTab(tabId, { graph: { text } });
+export const setGraphText = (tabId: string, text: string) => patchTab(tabId, { graph: { text }, dirty: true });
 
 export const setVectorCollection = (tabId: string, collection: string) => patchTab(tabId, { vector: { collection } });
 
@@ -1160,7 +1162,11 @@ export function openSavedQuery(connId: string, query: SavedQuery) {
   const open = get().tabs.find((t) => t.savedQueryId === query.id);
   if (open) return activateTab(open.id);
   noteRecent({ kind: "query", connId, name: query.name, queryId: query.id });
-  const tab = blankTab(connId, { title: query.name, sql: query.sql, savedQueryId: query.id });
+  // Cypher saved from a graph tab opens in one again.
+  const tab =
+    findConn(connId)?.driver.id === "neo4j"
+      ? blankTab(connId, { kind: "graph", title: query.name, graph: { text: query.sql }, savedQueryId: query.id })
+      : blankTab(connId, { title: query.name, sql: query.sql, savedQueryId: query.id });
   set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tab.id, activeConnectionId: connId }));
 }
 

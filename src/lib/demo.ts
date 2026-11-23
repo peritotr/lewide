@@ -287,7 +287,7 @@ export const demoBackend: Backend = {
     const nodes = [person(1, "Ada"), person(2, "Charles"), person(3, "Grace"), { id: "n4", labels: ["Company"], properties: { name: "Analytical Engines" } }, { id: "n5", labels: ["City"], properties: { name: "London" } }];
     const rel = (i: number, type: string, start: string, end: string) => ({ id: `r${i}`, type, start, end, properties: {} });
     const relationships = [rel(1, "KNOWS", "n1", "n2"), rel(2, "KNOWS", "n1", "n3"), rel(3, "WORKS_AT", "n1", "n4"), rel(4, "WORKS_AT", "n2", "n4"), rel(5, "LOCATED_IN", "n4", "n5")];
-    return [{ columns: ["a", "r", "b"], rows: relationships.map((r) => [{ kind: "node" as const, ...nodes.find((n) => n.id === r.start)! }, { kind: "relationship" as const, ...r }, { kind: "node" as const, ...nodes.find((n) => n.id === r.end)! }]), truncated: false, graph: { nodes, relationships }, node_count: 5, relationship_count: 5, nodes_omitted: 0, relationships_omitted: 0, counters: null, elapsed_ms: 64 }];
+    return [{ columns: ["a", "r", "b"], rows: relationships.map((r) => [{ kind: "node" as const, ...nodes.find((n) => n.id === r.start)! }, { kind: "relationship" as const, ...r }, { kind: "node" as const, ...nodes.find((n) => n.id === r.end)! }]), truncated: false, graph: { nodes, relationships }, node_count: 5, relationship_count: 5, nodes_omitted: 0, relationships_omitted: 0, counters: null, plan: null, elapsed_ms: 64 }];
   },
   graphNeighbours: async () => ({ nodes: [], relationships: [], total: 0, groups: [{ type: "KNOWS", outgoing: true, count: 2 }] }),
   graphLabels: async () => [

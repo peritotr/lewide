@@ -693,3 +693,18 @@ async fn follows_a_route_instead_of_the_host() {
         assert_eq!(value(&result.rows[0][0]), &Value::Int(1));
     }
 }
+
+#[tokio::test]
+async fn explain_returns_the_plan_as_text() {
+    let conn = connect_or_skip!();
+    let explained = run(
+        conn.as_ref(),
+        "EXPLAIN MATCH (n:LwPlan) WHERE n.x > 1 RETURN n",
+    )
+    .await;
+    let plan = explained.plan.expect("EXPLAIN gives a plan");
+    assert!(plan.contains("ProduceResults"), "{plan}");
+    assert!(explained.rows.is_empty());
+    // An ordinary statement has none.
+    assert_eq!(run(conn.as_ref(), "RETURN 1 AS one").await.plan, None);
+}

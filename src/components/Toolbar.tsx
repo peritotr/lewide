@@ -54,7 +54,8 @@ interface Props {
   conn: Conn | null;
   onRun(): void;
   onRunSelection(): void;
-  onExplain(): void;
+  /** Left out for languages without query plans. */
+  onExplain?: () => void;
   onFormat(): void;
 }
 
@@ -125,7 +126,7 @@ export function Toolbar({ tab, conn, onRun, onRunSelection, onExplain, onFormat 
         </Ghost>
       )}
       <i className="h-[16px] w-px bg-line" />
-      <Ghost disabled={!ready} onClick={onExplain} title={`${t("Show the query plan")} (${MOD}E)`}>
+      <Ghost disabled={!ready || !onExplain} onClick={onExplain} title={`${t("Show the query plan")} (${MOD}E)`}>
         <Network size={13} />
         <span className={label}>{t("Explain")}</span>
       </Ghost>
@@ -311,7 +312,7 @@ export function Toolbar({ tab, conn, onRun, onRunSelection, onExplain, onFormat 
   );
 }
 
-function SavePopover({ tab, conn, anchor, onClose }: { tab: Tab; conn: Conn; anchor: Anchor; onClose(): void }) {
+export function SavePopover({ tab, conn, anchor, onClose }: { tab: Tab; conn: Conn; anchor: Anchor; onClose(): void }) {
   const [name, setName] = useState(tab.title);
   const [error, setError] = useState<string | null>(null);
   const taken = conn.savedQueries.some((q) => q.name.toLowerCase() === name.trim().toLowerCase());

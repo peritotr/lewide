@@ -341,6 +341,8 @@ export interface CypherResult {
   nodes_omitted: number;
   relationships_omitted: number;
   counters: Record<string, number> | null;
+  /** The plan of an EXPLAIN or PROFILE statement, laid out as text by the server. */
+  plan: string | null;
   elapsed_ms: number;
 }
 

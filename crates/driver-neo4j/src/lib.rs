@@ -9,7 +9,6 @@
 
 mod convert;
 mod split;
-mod tls;
 
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
@@ -24,7 +23,6 @@ use dbclient_core::{
     DbObject, Driver, DriverInfo, Error, Namespace, ObjectDescription, ObjectKind, QueryRequest,
     QueryResult, Result, SqlDialect, TlsMode,
 };
-use rustls::pki_types::ServerName;
 use serde_json::{Map, Value as Json, json};
 
 use convert::Collector;
@@ -89,6 +87,8 @@ struct Answer {
     /// Rows of typed values, see [`convert`].
     rows: Vec<Vec<Json>>,
     counters: Option<GraphCounters>,
+    /// The plan of an `EXPLAIN` or `PROFILE` statement, as the server lays it out.
+    plan: Option<String>,
 }
 
 impl Neo4jConnection {
@@ -123,7 +123,7 @@ impl Neo4jConnection {
                 // has to carry the tunnel's address; the certificate is then
                 // checked against the real one.
                 url_host = route.ip().to_string();
-                check_as = ServerName::try_from(host.to_owned()).ok();
+                check_as = Some(host);
             } else {
                 // A name can be pointed at the tunnel instead; only the
                 // address is taken from here, the port comes from the URL.
@@ -134,7 +134,7 @@ impl Neo4jConnection {
         // Handed over ready-made also when TLS is off: reqwest would otherwise
         // set up its own and needs a process-wide crypto provider for that.
         let http = builder
-            .tls_backend_preconfigured(tls::client_config(&config.tls, check_as)?)
+            .tls_backend_preconfigured(dbclient_tls::client_config(&config.tls, check_as)?)
             .build()
             .map_err(|e| Error::Internal(format!("HTTP client: {}", describe(&e))))?;
 
@@ -269,10 +269,18 @@ impl Neo4jConnection {
                 .collect(),
             _ => Vec::new(),
         };
+        // Typed JSON wraps each argument: `{"$type": "String", "_value": "…"}`.
+        let plan = ["queryPlan", "profiledQueryPlan"].iter().find_map(|key| {
+            let text = &body[*key]["arguments"]["string-representation"];
+            text.as_str()
+                .or_else(|| text["_value"].as_str())
+                .map(str::to_owned)
+        });
         Ok(Answer {
             fields,
             rows,
             counters: counters(&body["counters"]),
+            plan,
         })
     }
 
@@ -369,6 +377,7 @@ impl Neo4jConnection {
                 relationships,
             },
             counters: answer.counters,
+            plan: answer.plan,
             elapsed_ms: started.elapsed().as_millis() as u64,
         })
     }

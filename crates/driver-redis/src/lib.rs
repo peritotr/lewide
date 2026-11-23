@@ -4,7 +4,6 @@
 //! commands as text, the way redis-cli does.
 
 mod resp;
-mod tls;
 
 use std::time::Instant;
 
@@ -81,7 +80,7 @@ impl Driver for RedisDriver {
             let name = rustls::pki_types::ServerName::try_from(host.to_owned())
                 .map_err(|e| Error::InvalidConfig(format!("host {host:?}: {e}")))?;
             let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(
-                tls::client_config(&config.tls)?,
+                dbclient_tls::client_config(&config.tls, None)?,
             ));
             Box::new(
                 connector

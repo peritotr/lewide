@@ -136,6 +136,8 @@ pub struct CypherResult {
     pub relationships_omitted: u64,
     /// `None` when the server did not report counters.
     pub counters: Option<GraphCounters>,
+    /// The plan of an `EXPLAIN` or `PROFILE` statement, as text laid out by the server.
+    pub plan: Option<String>,
     pub elapsed_ms: u64,
 }
 

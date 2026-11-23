@@ -1,14 +1,18 @@
 // A graph tab (R01–R02): Cypher at the top, and its result as a canvas of nodes
 // and relationships, as a table, or as text. The canvas is laid out once per
 // result and then stays still; nodes can be dragged, expanded and hidden.
-import { Minus, Plus, TriangleAlert, X } from "lucide-react";
+import { AlignLeft, FileSearch, Minus, Plus, Save, TriangleAlert, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { api, dbError, displayValue, errorMessage, type CypherResult, type GraphCell, type GraphNode, type GraphRelationship, type Neighbours } from "../lib/api";
 import { caption, fit, labelLetters, layout, type Pos } from "../lib/graph-layout";
-import { setGraphText, type Conn, type Tab } from "../store";
+import { formatCypher } from "../lib/languages";
+import { saveTabQuery, setGraphText, updateTab, type Conn, type Tab } from "../store";
 import { t, tn } from "../i18n";
 import { Button, Segmented, Strip } from "./dialog";
+import { Editor, type EditorHandle, type ErrorMark } from "./Editor";
+import { anchorOf, type Anchor } from "./menu";
 import { TabBar } from "./TabBar";
+import { SavePopover } from "./Toolbar";
 import { Loading } from "./TableView";
 
 const outline = "flex h-[24px] flex-none items-center gap-[6px] border border-line px-s2 text-[12px] whitespace-nowrap enabled:hover:bg-hover disabled:cursor-not-allowed disabled:opacity-45";
@@ -17,7 +21,7 @@ const MOD = /Mac/i.test(navigator.userAgent) ? "⌘" : "Ctrl+";
 const RADIUS = 20;
 const MAX_ROWS = 1000;
 
-type Mode = "graph" | "table" | "text";
+type Mode = "graph" | "table" | "text" | "plan";
 interface Graph {
   nodes: GraphNode[];
   relationships: GraphRelationship[];
@@ -56,10 +60,20 @@ export function GraphView({ tab, conn }: { tab: Tab; conn: Conn | null }) {
   const [notice, setNotice] = useState<string | null>(null);
   const canvas = useRef<HTMLDivElement>(null);
   const limitField = useRef<HTMLInputElement>(null);
-  const editor = useRef<HTMLTextAreaElement>(null);
+  const editor = useRef<EditorHandle | null>(null);
+  const [saving, setSaving] = useState<Anchor | null>(null);
   const run = useRef(0);
 
   const result = results?.[shown] ?? null;
+  // The editor marks the line and the word the server named.
+  const errorMark = useMemo<ErrorMark | null>(() => {
+    if (!error || (error.position === null && error.line === null)) return null;
+    const offset = error.position !== null ? error.position - 1 : null;
+    const line = error.line ?? (offset !== null ? text.slice(0, offset).split("\n").length : 1);
+    return { line, offset, message: error.message };
+    // The mark belongs to the run; editing clears it inside the editor.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [error]);
   const nodeLimit = Math.max(1, Math.min(5000, Number.parseInt(limit, 10) || 300));
 
   // A new result is fitted once the canvas has a size: it is drawn only after the run ends.
@@ -71,13 +85,15 @@ export function GraphView({ tab, conn }: { tab: Tab; conn: Conn | null }) {
     if (refit) pendingFit.current = true;
   }, []);
 
-  const execute = async () => {
+  /** Runs the text; `explain` asks for the plan of the statement under the caret instead. */
+  const execute = async (explain = false) => {
     if (session === null || !text.trim() || running) return;
+    const statement = explain ? (editor.current?.statementAtCaret()?.text ?? text).replace(/^\s*(EXPLAIN|PROFILE)\s+/i, "") : text;
     const id = ++run.current;
     setRunning(true);
     setError(null);
     try {
-      const loaded = await api.graphRun(session, text, MAX_ROWS, nodeLimit);
+      const loaded = await api.graphRun(session, explain ? `EXPLAIN ${statement}` : statement, MAX_ROWS, nodeLimit);
       if (id !== run.current) return;
       // The last statement that returned something is the one to look at.
       const index = Math.max(0, loaded.map((r) => r.columns.length > 0).lastIndexOf(true));
@@ -86,7 +102,8 @@ export function GraphView({ tab, conn }: { tab: Tab; conn: Conn | null }) {
       setHidden(new Set());
       setSelected(null);
       const next = loaded[index]?.graph ?? { nodes: [], relationships: [] };
-      if (next.nodes.length === 0 && (loaded[index]?.columns.length ?? 0) > 0) setMode((m) => (m === "graph" ? "table" : m));
+      if (loaded[index]?.plan) setMode("plan");
+      else if (next.nodes.length === 0 && (loaded[index]?.columns.length ?? 0) > 0) setMode((m) => (m === "graph" || m === "plan" ? "table" : m));
       else if (next.nodes.length > 0) setMode((m) => (m === "text" ? m : "graph"));
       show(next, {}, null, true);
     } catch (e) {
@@ -94,11 +111,7 @@ export function GraphView({ tab, conn }: { tab: Tab; conn: Conn | null }) {
       const failed = dbError(e);
       setError({ message: errorMessage(e), code: failed.code, position: failed.position, line: failed.line });
       // The caret goes to the place the server named, as in the SQL editor.
-      if (failed.position !== null && editor.current) {
-        const at = Math.min(failed.position - 1, editor.current.value.length);
-        editor.current.focus();
-        editor.current.setSelectionRange(at, Math.min(at + 1, editor.current.value.length));
-      }
+      if (failed.position !== null) editor.current?.goTo({ offset: failed.position - 1, line: failed.line ?? 1 });
     } finally {
       if (id === run.current) setRunning(false);
     }
@@ -203,12 +216,6 @@ export function GraphView({ tab, conn }: { tab: Tab; conn: Conn | null }) {
     <main
       className="relative grid min-h-0 min-w-0 grid-cols-[minmax(0,1fr)] bg-panel"
       style={{ gridTemplateRows: `34px ${production ? "4px" : "0px"} 40px 104px minmax(0,1fr)` }}
-      onKeyDown={(e) => {
-        if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-          e.preventDefault();
-          void execute();
-        }
-      }}
     >
       <TabBar />
       <div title={production ? t("Production connection") : undefined} className={production ? "production-band" : ""} />
@@ -217,6 +224,29 @@ export function GraphView({ tab, conn }: { tab: Tab; conn: Conn | null }) {
         <Button variant="primary" disabled={running || !text.trim()} onClick={() => void execute()}>
           {t("Run")} {MOD}↵
         </Button>
+        {/* Not drawn in the design: Explain, Format and Save, as in the SQL toolbar. */}
+        <button type="button" className={outline} disabled={running || !text.trim()} title={`${t("Show the query plan")} (${MOD}E)`} onClick={() => void execute(true)}>
+          <FileSearch size={13} />
+          {t("Explain")}
+        </button>
+        <button type="button" className={outline} disabled={!text.trim()} title={t("Format")} onClick={() => editor.current?.replaceText(formatCypher(text))}>
+          <AlignLeft size={13} />
+          {t("Format")}
+        </button>
+        <button
+          type="button"
+          className={outline}
+          disabled={!text.trim()}
+          title={t("Save query")}
+          onClick={(e) => {
+            if (tab.savedQueryId) void saveTabQuery(tab.id, tab.title).then((failed) => setNotice(failed ?? t("Query saved")));
+            else setSaving(anchorOf(e.currentTarget));
+          }}
+        >
+          <Save size={13} />
+          {t("Save")}
+        </button>
+        {saving && <SavePopover tab={tab} conn={conn} anchor={saving} onClose={() => setSaving(null)} />}
         <span className="font-mono text-[12px] text-text-2">
           {conn.name} / {conn.namespace ?? "neo4j"}
         </span>
@@ -227,17 +257,22 @@ export function GraphView({ tab, conn }: { tab: Tab; conn: Conn | null }) {
         </label>
       </div>
 
-      {/* The design asks for the SQL editor with Cypher colours; this is a plain field for now. */}
-      <textarea
-        ref={editor}
-        aria-label={t("Cypher")}
-        autoFocus
-        spellCheck={false}
-        placeholder="MATCH (n) RETURN n LIMIT 25"
-        className="resize-none border-b border-line bg-panel p-s3 font-mono text-[13px] leading-[20px] focus:outline-none"
-        value={text}
-        onChange={(e) => setGraphText(tab.id, e.target.value)}
-      />
+      {/* R01: the shared editor with Cypher colours. Run (⌘↵) runs the whole text. */}
+      <div className="grid min-h-0 border-b border-line">
+        <Editor
+          key={tab.id}
+          language={{ kind: "cypher" }}
+          schema={{}}
+          initialText={text}
+          error={errorMark}
+          handle={editor}
+          onChange={(next) => setGraphText(tab.id, next)}
+          onCaret={(line, col) => updateTab(tab.id, { caret: { line, col } })}
+          onRun={() => void execute()}
+          onRunSelection={() => void execute()}
+          onExplain={() => void execute(true)}
+        />
+      </div>
 
       {running ? (
         <Loading text={t("Running…")} />
@@ -265,6 +300,7 @@ export function GraphView({ tab, conn }: { tab: Tab; conn: Conn | null }) {
                 { value: "graph", label: t("Graph") },
                 { value: "table", label: t("Table") },
                 { value: "text", label: t("Text") },
+                ...(result.plan ? [{ value: "plan" as Mode, label: t("Query plan") }] : []),
               ]}
             />
             {results && results.length > 1 && (
@@ -309,7 +345,9 @@ export function GraphView({ tab, conn }: { tab: Tab; conn: Conn | null }) {
             <i />
           )}
 
-          {mode === "table" ? (
+          {mode === "plan" && result.plan ? (
+            <pre className="selectable min-h-0 overflow-auto p-s3 font-mono text-[12.5px] leading-[19px]">{result.plan}</pre>
+          ) : mode === "table" ? (
             <ResultTable result={result} colour={(node) => `var(--c-${(Math.max(0, labels.indexOf(node.labels[0] ?? "")) % 4) + 1})`} />
           ) : mode === "text" ? (
             // Not drawn in the design: one row per line.

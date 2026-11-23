@@ -1,5 +1,6 @@
-// SQL editor: CodeMirror 6 themed from the --syn-* tokens (see index.css),
-// with a gutter bar marking the statement that Run would execute.
+// The query editor: CodeMirror 6 themed from the --syn-* tokens (see index.css),
+// with a gutter bar marking the statement that Run would execute. It speaks
+// SQL in each dialect, Cypher, and Elasticsearch's console (see languages.ts).
 import { autocompletion, completionKeymap } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { MSSQL, MySQL, PostgreSQL, sql, SQLite } from "@codemirror/lang-sql";
@@ -23,9 +24,11 @@ import {
 } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { useEffect, useRef, type RefObject } from "react";
-import { t } from "../i18n";
+import { msg, t } from "../i18n";
 import { usePrefs } from "../prefs";
-import { splitStatements, statementAt, type SqlDialect, type Statement } from "../lib/sql";
+import { cypherLanguage, consoleLanguage } from "../lib/editor-modes";
+import { splitFor, statementAtFor, type EditorLanguage } from "../lib/languages";
+import type { SqlDialect, Statement } from "../lib/sql";
 
 /** Completion kinds as lang-sql names them: column, table, function, keyword. */
 const KIND: Record<string, string> = { property: "C", type: "T", function: "ƒ", keyword: "K", namespace: "S" };
@@ -53,12 +56,19 @@ export interface ErrorMark {
 const highlight = HighlightStyle.define([
   { tag: [tags.keyword, tags.operatorKeyword, tags.typeName], color: "var(--syn-kw)" },
   { tag: [tags.string, tags.special(tags.string)], color: "var(--syn-str)" },
-  { tag: [tags.number, tags.bool, tags.null], color: "var(--syn-num)" },
+  { tag: [tags.number, tags.bool, tags.null, tags.atom], color: "var(--syn-num)" },
   { tag: [tags.standard(tags.name), tags.function(tags.variableName)], color: "var(--syn-fn)" },
   { tag: [tags.lineComment, tags.blockComment], color: "var(--syn-com)", fontStyle: "italic" },
 ]);
 
-const DIALECTS = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite, sqlserver: MSSQL, clickhouse: MySQL, duckdb: PostgreSQL };
+const DIALECTS: Record<SqlDialect, typeof PostgreSQL> = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite, sqlserver: MSSQL, clickhouse: MySQL, duckdb: PostgreSQL };
+
+// The console's is an example request, not a sentence, so it is not translated.
+const PLACEHOLDER: Record<EditorLanguage["kind"], () => string> = {
+  sql: () => t(msg("Write SQL here")),
+  cypher: () => t(msg("Write Cypher here")),
+  console: () => "GET /index/_search",
+};
 
 // The SQL grammar does not mark function calls, so a name directly followed by
 // "(" is coloured here, unless the grammar says it is a keyword (IN, VALUES, ...),
@@ -126,7 +136,7 @@ const errorDecorations = EditorView.decorations.compute([errorField], (state) =>
 });
 
 interface Props {
-  dialect: SqlDialect;
+  language: EditorLanguage;
   /** Tables and their columns, offered as completions. Tables without loaded columns map to []. */
   schema: Record<string, string[]>;
   initialText: string;
@@ -148,11 +158,12 @@ export function Editor(props: Props) {
   const view = useRef<EditorView | null>(null);
   // The language sits in a compartment so the completion schema can change without rebuilding the editor.
   const language = useRef(new Compartment());
-  const languageFor = (dialect: SqlDialect, schema: Record<string, string[]>) =>
-    sql({ dialect: DIALECTS[dialect], schema, upperCaseKeywords: true });
+  // Only SQL gets completion from the schema and the function-call colour.
+  const languageFor = (lang: EditorLanguage, schema: Record<string, string[]>) =>
+    lang.kind === "sql" ? [sql({ dialect: DIALECTS[lang.dialect], schema, upperCaseKeywords: true }), functionHighlight] : lang.kind === "cypher" ? cypherLanguage : consoleLanguage;
 
   useEffect(() => {
-    view.current?.dispatch({ effects: language.current.reconfigure(languageFor(props.dialect, props.schema)) });
+    view.current?.dispatch({ effects: language.current.reconfigure(languageFor(props.language, props.schema)) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.schema]);
 
@@ -161,11 +172,11 @@ export function Editor(props: Props) {
   }, [props.error]);
 
   useEffect(() => {
-    const { dialect, initialText, handle } = latest.current;
+    const { language: lang, initialText, handle } = latest.current;
     // Settings › Editor, read when the editor is made.
     const prefs = usePrefs.getState();
     document.documentElement.style.setProperty("--completion-hint", JSON.stringify(t("↑↓ Move · ↵ Tab Accept · Esc Close")));
-    const range = (state: EditorState) => statementAt(state.doc.toString(), state.selection.main.head, dialect);
+    const range = (state: EditorState) => statementAtFor(state.doc.toString(), state.selection.main.head, lang);
     const statement = StateField.define({
       create: range,
       update: (value, tr) => (tr.docChanged || tr.selection ? range(tr.state) : value),
@@ -205,8 +216,8 @@ export function Editor(props: Props) {
           drawSelection(),
           highlightActiveLine(),
           highlightActiveLineGutter(),
-          placeholder(t("Write SQL here")),
-          language.current.of(languageFor(dialect, latest.current.schema)),
+          placeholder(PLACEHOLDER[lang.kind]()),
+          language.current.of(languageFor(lang, latest.current.schema)),
           ...(prefs.autocomplete
             ? [
                 autocompletion({
@@ -227,7 +238,6 @@ export function Editor(props: Props) {
               ]
             : []),
           syntaxHighlighting(highlight),
-          functionHighlight,
           keymap.of([
             { key: "Shift-Mod-Enter", run: command(() => latest.current.onRunSelection()) },
             { key: "Mod-Enter", run: command(() => latest.current.onRun()) },
@@ -257,7 +267,7 @@ export function Editor(props: Props) {
         const { from, to } = editor.state.selection.main;
         if (from === to) return null;
         // Offsets are those of the whole text, so an error can be pointed at later.
-        return splitStatements(editor.state.sliceDoc(from, to), dialect).map((s) => ({ ...s, from: s.from + from, to: s.to + from }));
+        return splitFor(editor.state.sliceDoc(from, to), lang).map((s) => ({ ...s, from: s.from + from, to: s.to + from }));
       },
       text: () => editor.state.doc.toString(),
       replaceText: (text) => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: text } }),
