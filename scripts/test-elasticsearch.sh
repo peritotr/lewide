@@ -11,6 +11,8 @@ set -euo pipefail
 
 NAME=dbclient-test-elasticsearch
 NAME_OS=dbclient-test-opensearch
+# A full disk on the developer's machine must not make the test server read-only,
+# so the disk watermarks are off (the containers hold a few kilobytes).
 # Pinned so a new release cannot change what the tests see unnoticed.
 IMAGE="${DBCLIENT_TEST_ELASTICSEARCH_IMAGE:-docker.elastic.co/elasticsearch/elasticsearch:8.19.7}"
 IMAGE_OS="${DBCLIENT_TEST_OPENSEARCH_IMAGE:-opensearchproject/opensearch:2.19.3}"
@@ -40,6 +42,7 @@ up() {
     -e xpack.security.http.ssl.enabled=false \
     -e ELASTIC_PASSWORD="$PASSWORD" \
     -e ES_JAVA_OPTS="-Xms512m -Xmx512m" \
+    -e cluster.routing.allocation.disk.threshold_enabled=false \
     "$IMAGE" >/dev/null
   local url
   url="http://127.0.0.1:$(port "$NAME")"
@@ -56,6 +59,7 @@ open() {
     -e DISABLE_SECURITY_PLUGIN=true \
     -e DISABLE_INSTALL_DEMO_CONFIG=true \
     -e OPENSEARCH_JAVA_OPTS="-Xms512m -Xmx512m" \
+    -e cluster.routing.allocation.disk.threshold_enabled=false \
     "$IMAGE_OS" >/dev/null
   local url
   url="http://127.0.0.1:$(port "$NAME_OS")"

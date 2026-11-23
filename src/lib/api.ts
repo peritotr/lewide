@@ -639,6 +639,8 @@ export interface Backend {
   docFind(session: number, request: FindRequest): Promise<FindPage>;
   docCount(session: number, database: string, collection: string, filter?: string | null): Promise<number>;
   docWrite(session: number, database: string, collection: string, change: DocumentChange): Promise<WriteOutcome>;
+  /** Writes every document `request` matches; `columns` are the top-level fields a CSV file gets. */
+  exportDocuments(session: number, request: FindRequest, format: ExportFormat, columns: string[], path: string): Promise<number>;
   /** One result per statement. `nodeLimit` caps the drawn graph, not the rows. */
   graphRun(session: number, statement: string, maxRows: number, nodeLimit: number): Promise<CypherResult[]>;
   graphNeighbours(session: number, nodeId: string, limit: number): Promise<Neighbours>;
@@ -700,6 +702,7 @@ const tauriBackend: Backend = {
   docFind: (session, request) => invoke("doc_find", { session, request }),
   docCount: (session, database, collection, filter) => invoke("doc_count", { session, database, collection, filter: filter ?? null }),
   docWrite: (session, database, collection, change) => invoke("doc_write", { session, database, collection, change }),
+  exportDocuments: (session, request, format, columns, path) => invoke("export_documents", { session, request, format, columns, path }),
   graphRun: (session, statement, maxRows, nodeLimit) => invoke("graph_run", { session, request: { statement, max_rows: maxRows, node_limit: nodeLimit } }),
   graphNeighbours: (session, nodeId, limit) => invoke("graph_neighbours", { session, request: { node_id: nodeId, limit } }),
   graphLabels: (session, database) => invoke("graph_labels", { session, database }),
@@ -782,6 +785,7 @@ export const api: Backend = {
   docFind: (session, request) => backend.docFind(session, request),
   docCount: (session, database, collection, filter) => backend.docCount(session, database, collection, filter),
   docWrite: (session, database, collection, change) => backend.docWrite(session, database, collection, change),
+  exportDocuments: (session, request, format, columns, path) => backend.exportDocuments(session, request, format, columns, path),
   graphRun: (session, statement, maxRows, nodeLimit) => backend.graphRun(session, statement, maxRows, nodeLimit),
   graphNeighbours: (session, nodeId, limit) => backend.graphNeighbours(session, nodeId, limit),
   graphLabels: (session, database) => backend.graphLabels(session, database),

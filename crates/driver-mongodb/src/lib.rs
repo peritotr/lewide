@@ -554,6 +554,94 @@ impl Connection for MongoConnection {
         })
     }
 
+    /// The collection's indexes from `listIndexes`, with their sizes from
+    /// `$collStats` when the user may read them. A key part is the field,
+    /// followed by its direction or kind when that is not ascending
+    /// (`year desc`, `title text`, `location 2dsphere`).
+    async fn list_indexes(
+        &self,
+        namespace: Option<&str>,
+        table: &str,
+    ) -> Result<Vec<dbclient_core::IndexDescription>> {
+        let database = self.database_or_default(namespace)?;
+        let collection = self.client.database(database).collection::<Document>(table);
+        let models: Vec<_> = collection
+            .list_indexes()
+            .await
+            .map_err(op_err)?
+            .try_collect()
+            .await
+            .map_err(op_err)?;
+        // Sizes are extra: a user without the right to read statistics still sees the list.
+        let sizes = collection
+            .aggregate([doc! { "$collStats": { "storageStats": {} } }])
+            .await
+            .ok()
+            .map(|cursor| cursor.try_collect::<Vec<_>>());
+        let sizes = match sizes {
+            Some(collect) => collect
+                .await
+                .ok()
+                .and_then(|stats| stats.into_iter().next())
+                .and_then(|s| {
+                    s.get_document("storageStats")
+                        .ok()?
+                        .get_document("indexSizes")
+                        .ok()
+                        .cloned()
+                }),
+            None => None,
+        };
+        Ok(models
+            .into_iter()
+            .map(|model| {
+                let options = model.options.unwrap_or_default();
+                let name = options.name.clone().unwrap_or_default();
+                let mut method = None;
+                let columns = model
+                    .keys
+                    .iter()
+                    .map(|(field, kind)| match kind {
+                        Bson::String(kind) => {
+                            method = Some(kind.clone());
+                            format!("{field} {kind}")
+                        }
+                        other
+                            if other
+                                .as_f64()
+                                .or_else(|| other.as_i64().map(|i| i as f64))
+                                .or_else(|| other.as_i32().map(f64::from))
+                                .is_some_and(|v| v < 0.0) =>
+                        {
+                            format!("{field} desc")
+                        }
+                        _ => field.clone(),
+                    })
+                    .collect();
+                let size = sizes
+                    .as_ref()
+                    .and_then(|s| s.get(&name))
+                    .and_then(|b| {
+                        b.as_i64()
+                            .or_else(|| b.as_i32().map(i64::from))
+                            .or_else(|| b.as_f64().map(|f| f as i64))
+                    })
+                    .map(size_text);
+                dbclient_core::IndexDescription {
+                    primary: name == "_id_",
+                    unique: name == "_id_" || options.unique == Some(true),
+                    columns,
+                    method,
+                    size,
+                    condition: options
+                        .partial_filter_expression
+                        .map(|filter| Bson::Document(filter).into_relaxed_extjson().to_string()),
+                    name,
+                }
+            })
+            .collect())
+    }
+
     /// Never used: no statement text is built for this driver. The trait
     /// requires a value.
     fn dialect(&self) -> SqlDialect {
@@ -641,6 +729,23 @@ fn connect_err(error: mongodb::error::Error) -> Error {
         | ErrorKind::InvalidTlsConfig { message, .. } => Error::InvalidConfig(message),
         ErrorKind::Authentication { message, .. } => Error::Connect(message),
         _ => Error::Connect(error.to_string()),
+    }
+}
+
+/// A byte count as the structure view shows sizes: `412 B`, `1.5 KB`, `12.3 MB`.
+fn size_text(bytes: i64) -> String {
+    let bytes = bytes.max(0) as f64;
+    let units = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < units.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", units[unit])
     }
 }
 

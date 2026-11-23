@@ -280,6 +280,7 @@ export const demoBackend: Backend = {
   },
   docCount: async () => 3,
   docWrite: async () => ({ matched: 1, modified: 1, deleted: 0, inserted_id: null }),
+  exportDocuments: async () => 12408,
   graphRun: async () => {
     await wait(200);
     const person = (i: number, name: string) => ({ id: `n${i}`, labels: ["Person"], properties: { name } });

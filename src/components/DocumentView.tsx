@@ -1,14 +1,15 @@
 // A document tab (D01–D03): one collection, a page of documents at a time, as
 // a tree, a table or JSON. A value is edited in place and written at once with
 // $set on the document's _id; on a Production connection every write asks first.
-import { ChevronDown, ChevronLeft, ChevronRight, Copy, Plus, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
+import { save } from "@tauri-apps/plugin-dialog";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, KeyRound, Plus, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api, dbError, errorMessage, type DocCollectionInfo, type DocumentChange, type FindPage } from "../lib/api";
+import { api, dbError, errorMessage, inTauri, type DocCollectionInfo, type DocumentChange, type ExportFormat, type FindPage, type IndexDescription } from "../lib/api";
 import { bsonType, cellAt, isContainer, parseAs, preview, scalarText, scalarTone, tableColumns, typeLabel } from "../lib/ejson";
 import { formatBytes } from "../lib/kv";
-import type { Conn, Tab } from "../store";
+import { loadObjects, type Conn, type Tab } from "../store";
 import { t, tn } from "../i18n";
-import { Button, Dialog, Segmented } from "./dialog";
+import { Button, Dialog, Field, Segmented, Strip, TextInput } from "./dialog";
 import { TabBar } from "./TabBar";
 import { LoadError, Loading } from "./TableView";
 import { Tag } from "./ui";
@@ -60,6 +61,8 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [adding, setAdding] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [indexes, setIndexes] = useState(false);
   const run = useRef(0);
 
   const readOnly = info?.kind === "view";
@@ -131,7 +134,11 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
         else setNotice({ text: done, error: false });
         setTotal(null);
         void find(applied, skip);
-        if (change.op !== "update") loadInfo();
+        if (change.op !== "update") {
+          loadInfo();
+          // The tree beside shows the count too.
+          if (conn) void loadObjects(conn.id, database);
+        }
         after?.ok();
       } catch (e) {
         if (after) after.failed(errorMessage(e));
@@ -259,6 +266,17 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
           <button type="button" className={ghost} disabled={loading} onClick={() => (loadInfo(), void find(applied, skip))}>
             <RefreshCw size={13} />
             {t("Refresh")}
+          </button>
+          {/* Not drawn in the design: the index list, as a dialog like Export's. */}
+          {conn?.driver.id === "mongodb" && (
+            <button type="button" className={ghost} onClick={() => setIndexes(true)}>
+              <KeyRound size={13} />
+              {t("Indexes")}
+            </button>
+          )}
+          <button type="button" className={ghost} disabled={!page} onClick={() => setExporting(true)}>
+            <Download size={13} />
+            {t("Export")}
           </button>
         </div>
       </div>
@@ -395,6 +413,18 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
           <div className="text-[13px]">{confirm.body}</div>
         </Dialog>
       )}
+      {exporting && session !== null && page && (
+        <ExportDocuments
+          session={session}
+          production={production}
+          database={database}
+          collection={collection}
+          query={applied}
+          fields={[...new Set(page.documents.flatMap((d) => Object.keys(d.document as Doc)))]}
+          onClose={() => setExporting(false)}
+        />
+      )}
+      {indexes && session !== null && <IndexList session={session} database={database} collection={collection} onClose={() => setIndexes(false)} />}
       {adding && (
         <AddDocument
           production={production}
@@ -412,6 +442,154 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
         />
       )}
     </main>
+  );
+}
+
+// Not drawn in the design: the document form of the export wizard (X01), one
+// step. JSON keeps each document whole; CSV writes the top-level fields of the
+// page on screen, one column each.
+function ExportDocuments({ session, production, database, collection, query, fields, onClose }: { session: number; production: boolean; database: string; collection: string; query: Query; fields: string[]; onClose(): void }) {
+  const [kind, setKind] = useState<"json" | "json_lines" | "csv">("json");
+  const [path, setPath] = useState("");
+  const [run, setRun] = useState<{ state: "idle" | "running" } | { state: "ok"; count: number } | { state: "failed"; message: string }>({ state: "idle" });
+  const extension = kind === "csv" ? "csv" : kind === "json" ? "json" : "jsonl";
+  const format: ExportFormat = kind === "csv" ? { format: "csv", header: true } : { format: kind };
+  const browse = async () => {
+    const picked = await save({ defaultPath: `${collection}.${extension}`, filters: [{ name: extension.toUpperCase(), extensions: [extension] }] }).catch(() => null);
+    if (picked) setPath(picked);
+  };
+  const start = async () => {
+    setRun({ state: "running" });
+    try {
+      const count = await api.exportDocuments(session, { database, collection, filter: query.filter || null, projection: query.projection || null, sort: query.sort || null, skip: 0, limit: 1 }, format, fields, path.trim());
+      setRun({ state: "ok", count });
+    } catch (e) {
+      setRun({ state: "failed", message: errorMessage(e) });
+    }
+  };
+  return (
+    <Dialog
+      title={t("Export {table}", { table: `${database}.${collection}` })}
+      width={560}
+      band={production ? "production" : undefined}
+      onClose={onClose}
+      onSubmit={() => void start()}
+      footer={
+        run.state === "ok" ? (
+          <Button variant="primary" onClick={onClose}>
+            {t("Done")}
+          </Button>
+        ) : (
+          <>
+            <Button variant="ghost" onClick={onClose}>
+              {t("Cancel")}
+            </Button>
+            <Button type="submit" variant="primary" disabled={!path.trim() || run.state === "running"}>
+              {t("Export")}
+            </Button>
+          </>
+        )
+      }
+    >
+      <div className="flex flex-col gap-s3">
+        <p className="text-[12.5px] text-text-2">{query.filter ? t("Every document that matches the current filter, read again from the server in pages.") : t("Every document of the collection, read again from the server in pages.")}</p>
+        <Segmented<"json" | "json_lines" | "csv">
+          label={t("Format")}
+          value={kind}
+          onChange={setKind}
+          options={[
+            { value: "json", label: t("JSON array") },
+            { value: "json_lines", label: t("JSON Lines") },
+            { value: "csv", label: "CSV" },
+          ]}
+        />
+        <p className="text-[12px] text-text-2">
+          {kind === "csv"
+            ? tn(fields.length, "One column, {fields}. Other fields are left out; objects and lists are written as JSON text.", "{count} columns: {fields}. Other fields are left out; objects and lists are written as JSON text.", { fields: fields.join(", ") })
+            : t("Each document whole, as the view shows it.")}
+        </p>
+        <Field label={t("Save to")}>
+          <div className="flex gap-s2">
+            <TextInput mono className="flex-1" value={path} placeholder={`/…/${collection}.${extension}`} onChange={(e) => setPath(e.target.value)} />
+            <Button disabled={!inTauri} onClick={browse}>
+              {t("Browse…")}
+            </Button>
+          </div>
+        </Field>
+        {run.state === "failed" && (
+          <Strip kind="error" icon={<TriangleAlert size={13} />}>
+            <span className="selectable font-mono text-[12px] break-words">{run.message}</span>
+          </Strip>
+        )}
+        {run.state === "ok" && (
+          <Strip kind="success" icon={<Check size={13} />}>
+            {tn(run.count, "{count} document written.", "{count} documents written.")}
+          </Strip>
+        )}
+      </div>
+    </Dialog>
+  );
+}
+
+// Not drawn in the design: a read-only list of the collection's indexes.
+function IndexList({ session, database, collection, onClose }: { session: number; database: string; collection: string; onClose(): void }) {
+  const [list, setList] = useState<IndexDescription[] | { error: string } | null>(null);
+  useEffect(() => {
+    api.tableStructure(session, collection, database).then(
+      (s) => setList(s.indexes),
+      (e) => setList({ error: errorMessage(e) }),
+    );
+  }, [session, database, collection]);
+  return (
+    <Dialog
+      title={t("Indexes of {table}", { table: `${database}.${collection}` })}
+      width={720}
+      onClose={onClose}
+      footer={
+        <Button variant="primary" onClick={onClose}>
+          {t("Close")}
+        </Button>
+      }
+    >
+      {list === null ? (
+        <p className="text-[12.5px] text-text-2">{t("Loading…")}</p>
+      ) : "error" in list ? (
+        <Strip kind="error" icon={<TriangleAlert size={13} />}>
+          <span className="selectable font-mono text-[12px]">{list.error}</span>
+        </Strip>
+      ) : (
+        <table className="w-full border border-line text-[12.5px]">
+          <thead>
+            <tr className="h-row border-b border-line bg-bg text-left">
+              {[t("Name"), t("Keys"), t("Kind"), t("Size")].map((h) => (
+                <th key={h} className="label px-s2 font-normal">
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((index) => (
+              <tr key={index.name} className="h-row border-b border-line-2 align-middle">
+                <td className="px-s2 font-mono text-[12px]">{index.name}</td>
+                <td className="selectable px-s2 font-mono text-[12px]">
+                  {index.columns.join(", ")}
+                  {index.condition && <span className="block text-[11.5px] text-text-3">{t("where {condition}", { condition: index.condition })}</span>}
+                </td>
+                <td className="px-s2">
+                  <span className="flex gap-[4px]">
+                    {index.primary && <Tag>_id</Tag>}
+                    {index.unique && !index.primary && <Tag>{t("Unique")}</Tag>}
+                    {index.method && <Tag>{index.method}</Tag>}
+                  </span>
+                </td>
+                <td className="px-s2 font-mono text-[12px] text-text-2">{index.size ?? "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Dialog>
   );
 }
 

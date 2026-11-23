@@ -17,7 +17,8 @@ mod tls;
 
 use std::error::Error as _;
 use std::net::IpAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -51,6 +52,7 @@ impl Driver for ElasticsearchDriver {
             model: DataModel::Document,
             capabilities: Capabilities {
                 tls: true,
+                cancel: true,
                 ..Capabilities::default()
             },
             default_port: Some(9200),
@@ -86,6 +88,10 @@ struct SearchConnection {
     cluster: String,
     version: String,
     closed: AtomicBool,
+    /// The `X-Opaque-Id` of the console request now running, for `cancel`.
+    running: Mutex<Option<String>>,
+    /// Numbers the console requests of this connection.
+    requests: AtomicU64,
 }
 
 impl SearchConnection {
@@ -168,6 +174,8 @@ impl SearchConnection {
             cluster: String::new(),
             version: String::new(),
             closed: AtomicBool::new(false),
+            running: Mutex::new(None),
+            requests: AtomicU64::new(0),
         })
     }
 
@@ -196,6 +204,19 @@ impl SearchConnection {
         body: Option<Body>,
         timeout: Duration,
     ) -> Result<(StatusCode, Json)> {
+        self.send_tagged(method, path, body, timeout, None).await
+    }
+
+    /// Like [`send`](Self::send), with an `X-Opaque-Id` the server keeps on
+    /// the task it starts, so the task can be found and cancelled.
+    async fn send_tagged(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Body>,
+        timeout: Duration,
+        opaque: Option<&str>,
+    ) -> Result<(StatusCode, Json)> {
         if self.closed.load(Ordering::Relaxed) {
             return Err(Error::ConnectionLost("the connection was closed".into()));
         }
@@ -204,6 +225,9 @@ impl SearchConnection {
             .join(path)
             .map_err(|_| Error::Query(format!("not a valid path: {path}")))?;
         let mut request = self.http.request(method, url);
+        if let Some(opaque) = opaque {
+            request = request.header("X-Opaque-Id", opaque);
+        }
         if timeout > Duration::ZERO {
             request = request.timeout(timeout);
         }
@@ -693,9 +717,26 @@ impl Connection for SearchConnection {
                 }
                 Some(text) => Some(Body::Json(query::parse_json(TextPart::Command, &text)?)),
             };
-            let reply = self
-                .call(method, &console.path, body, Duration::ZERO)
-                .await?;
+            let opaque = format!(
+                "lewide-{}-{}",
+                std::process::id(),
+                self.requests.fetch_add(1, Ordering::Relaxed)
+            );
+            if let Ok(mut running) = self.running.lock() {
+                *running = Some(opaque.clone());
+            }
+            let sent = self
+                .send_tagged(method, &console.path, body, Duration::ZERO, Some(&opaque))
+                .await;
+            if let Ok(mut running) = self.running.lock()
+                && running.as_deref() == Some(opaque.as_str())
+            {
+                *running = None;
+            }
+            let (status, reply) = sent?;
+            if !status.is_success() {
+                return Err(server_error(status, &reply));
+            }
             results.push(Self::table(reply, request.max_rows, started));
         }
         Ok(results)
@@ -808,6 +849,43 @@ impl Connection for SearchConnection {
 
     fn document(&self) -> Option<&dyn DocumentStore> {
         Some(self)
+    }
+
+    /// Cancels the tasks the running console request started, found by its
+    /// `X-Opaque-Id`. Searches and the `_by_query` APIs stop; a request whose
+    /// task cannot be cancelled (an index or a bulk write) runs to its end.
+    async fn cancel(&self) -> Result<()> {
+        let Some(opaque) = self.running.lock().ok().and_then(|r| r.clone()) else {
+            return Ok(());
+        };
+        let tasks = self
+            .call(Method::GET, "/_tasks?group_by=none", None, REQUEST_TIMEOUT)
+            .await?;
+        let ids: Vec<String> = tasks["tasks"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|task| task["headers"]["X-Opaque-Id"] == opaque.as_str())
+            .filter_map(|task| {
+                Some(format!(
+                    "{}:{}",
+                    task["node"].as_str()?,
+                    task["id"].as_u64()?
+                ))
+            })
+            .collect();
+        for id in ids {
+            // A task that ended meanwhile is no longer there; that is not a failure.
+            let _ = self
+                .send(
+                    Method::POST,
+                    &format!("/_tasks/{}/_cancel", encode(&id)),
+                    None,
+                    REQUEST_TIMEOUT,
+                )
+                .await?;
+        }
+        Ok(())
     }
 
     async fn close(&self) -> Result<()> {

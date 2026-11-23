@@ -855,6 +855,69 @@ async fn describes_a_collection_from_a_sample() {
 }
 
 #[tokio::test]
+async fn lists_indexes_with_kinds_and_sizes() {
+    let db = "dbclient_test_indexes";
+    let conn = connect_or_skip!(db);
+    let store = conn.document().unwrap();
+    insert(
+        store,
+        db,
+        "people",
+        "{ _id: 1, name: 'Ada', age: 36, bio: 'Çağrı' }",
+    )
+    .await;
+    run(
+        &*conn,
+        "{ createIndexes: 'people', indexes: [\
+           { key: { name: 1, age: -1 }, name: 'name_age', unique: true },\
+           { key: { bio: 'text' }, name: 'bio_text' },\
+           { key: { email: 1 }, name: 'email_partial', partialFilterExpression: { email: { $exists: true } } } ] }",
+    )
+    .await;
+
+    let indexes = conn.list_indexes(Some(db), "people").await.unwrap();
+    let summary: Vec<_> = indexes
+        .iter()
+        .map(|i| {
+            (
+                i.name.as_str(),
+                i.columns.join(", "),
+                i.unique,
+                i.primary,
+                i.method.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("_id_", "_id".to_owned(), true, true, None),
+            ("name_age", "name, age desc".to_owned(), true, false, None),
+            // A text index is stored under the internal fields `_fts` and `_ftsx`.
+            (
+                "bio_text",
+                "_fts text, _ftsx".to_owned(),
+                false,
+                false,
+                Some("text")
+            ),
+            ("email_partial", "email".to_owned(), false, false, None),
+        ]
+    );
+    assert!(
+        indexes
+            .iter()
+            .all(|i| i.size.as_deref().is_some_and(|s| s.ends_with('B')))
+    );
+    assert_eq!(
+        indexes[3].condition.as_deref(),
+        Some(r#"{"email":{"$exists":true}}"#)
+    );
+    let structure = conn.table_structure(Some(db), "people").await.unwrap();
+    assert_eq!(structure.indexes, indexes);
+}
+
+#[tokio::test]
 async fn runs_a_command_document_and_refuses_sql_shaped_calls() {
     let db = "dbclient_test_command";
     let conn = connect_or_skip!(db);

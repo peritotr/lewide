@@ -449,10 +449,12 @@ impl DocumentStore for CouchbaseConnection {
 
     async fn count(&self, database: &str, collection: &str, filter: Option<&str>) -> Result<u64> {
         let space = keyspace(database, collection)?;
-        let mut statement = format!("SELECT RAW COUNT(*) FROM {space} AS {ALIAS}");
-        if let Some(filter) = query::filter(filter)? {
-            statement.push_str(&format!(" WHERE {filter}"));
-        }
+        // Without a condition SQL++ answers COUNT(*) from the collection's
+        // statistics, which can lag behind a write just made (seen in CI). A
+        // condition makes it scan, and the scan waits for every earlier write.
+        let filter =
+            query::filter(filter)?.unwrap_or_else(|| format!("META({ALIAS}).id IS NOT MISSING"));
+        let statement = format!("SELECT RAW COUNT(*) FROM {space} AS {ALIAS} WHERE {filter}");
         let reply = self.run(&statement, Vec::new()).await?;
         reply
             .results

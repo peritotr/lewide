@@ -284,11 +284,105 @@ pub fn type_name(value: &serde_json::Value) -> &'static str {
     }
 }
 
+/// A document field as one cell of a table export (CSV). Extended JSON
+/// wrappers become the plain value they stand for: numbers as numbers, an
+/// ObjectId as its hex text, a date as an ISO 8601 UTC time. Objects and lists
+/// stay JSON, which CSV writes as text.
+pub fn cell(value: &serde_json::Value) -> crate::Value {
+    use crate::Value as Cell;
+    use serde_json::Value;
+    let number = |text: &str| -> Cell {
+        if let Ok(int) = text.parse::<i64>() {
+            Cell::Int(int)
+        } else {
+            Cell::Decimal(text.to_owned())
+        }
+    };
+    match value {
+        Value::Null => Cell::Null,
+        Value::Bool(flag) => Cell::Bool(*flag),
+        Value::String(text) => Cell::Text(text.clone()),
+        Value::Number(n) => match n.as_i64() {
+            Some(int) => Cell::Int(int),
+            None => Cell::Decimal(n.to_string()),
+        },
+        Value::Object(map) if map.len() == 1 => {
+            let (key, inner) = map.iter().next().expect("one entry");
+            match (key.as_str(), inner) {
+                (
+                    "$numberInt" | "$numberLong" | "$numberDouble" | "$numberDecimal",
+                    Value::String(text),
+                ) => number(text),
+                ("$oid" | "$symbol", Value::String(text)) => Cell::Text(text.clone()),
+                ("$date", Value::String(iso)) => Cell::Temporal(iso.clone()),
+                ("$date", Value::Object(ms)) => match ms
+                    .get("$numberLong")
+                    .and_then(Value::as_str)
+                    .and_then(|t| t.parse::<i64>().ok())
+                {
+                    Some(ms) => Cell::Temporal(iso_time(ms)),
+                    None => Cell::Json(value.clone()),
+                },
+                _ => Cell::Json(value.clone()),
+            }
+        }
+        other => Cell::Json(other.clone()),
+    }
+}
+
+/// Milliseconds since 1970 as `2023-11-14T22:13:20.000Z`.
+fn iso_time(ms: i64) -> String {
+    let days = ms.div_euclid(86_400_000);
+    let rest = ms.rem_euclid(86_400_000);
+    // Howard Hinnant's days-to-civil conversion.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
+        rest / 3_600_000,
+        rest / 60_000 % 60,
+        rest / 1000 % 60,
+        rest % 1000
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn documents_become_cells() {
+        use crate::Value as Cell;
+        assert_eq!(cell(&json!({"$numberInt": "42"})), Cell::Int(42));
+        assert_eq!(
+            cell(&json!({"$numberDouble": "1.5"})),
+            Cell::Decimal("1.5".into())
+        );
+        assert_eq!(
+            cell(&json!({"$oid": "65f1c0a2b7e4d3a1c0ffee01"})),
+            Cell::Text("65f1c0a2b7e4d3a1c0ffee01".into())
+        );
+        assert_eq!(
+            cell(&json!({"$date": {"$numberLong": "1700000000000"}})),
+            Cell::Temporal("2023-11-14T22:13:20.000Z".into())
+        );
+        assert_eq!(
+            cell(&json!({"$date": {"$numberLong": "-1"}})),
+            Cell::Temporal("1969-12-31T23:59:59.999Z".into())
+        );
+        assert_eq!(cell(&json!(2.5)), Cell::Decimal("2.5".into()));
+        assert_eq!(cell(&json!({"a": 1})), Cell::Json(json!({"a": 1})));
+        assert_eq!(cell(&json!(null)), Cell::Null);
+    }
 
     #[test]
     fn names_the_type_of_extended_json_values() {

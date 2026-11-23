@@ -763,6 +763,119 @@ async fn doc_write(
     state.or_lost(session, result).await
 }
 
+/// Writes every document a query matches to a file, a page at a time.
+/// JSON and JSON Lines keep each document whole, as the view shows it;
+/// CSV writes the given top-level fields, one column each (other fields are
+/// left out, objects and lists become JSON text). Returns the number written.
+#[tauri::command]
+async fn export_documents(
+    state: State<'_, AppState>,
+    session: u64,
+    request: dbclient_core::document::FindRequest,
+    format: ExportFormat,
+    columns: Vec<String>,
+    path: String,
+) -> Result<u64, Error> {
+    let connection = state.session(session).await?;
+    let (file, out) = PartFile::create(&path)?;
+    let result = write_documents(connection.as_ref(), request, format, columns, out).await;
+    match result {
+        Ok(count) => file.keep().map(|()| count),
+        Err(error) => {
+            file.discard();
+            state.or_lost(session, Err(error)).await
+        }
+    }
+}
+
+async fn write_documents<W: std::io::Write>(
+    connection: &dyn Connection,
+    mut request: dbclient_core::document::FindRequest,
+    format: ExportFormat,
+    columns: Vec<String>,
+    out: W,
+) -> Result<u64, Error> {
+    /// Where documents go: through the table exporter (CSV), or as JSON text.
+    enum Sink<W: std::io::Write> {
+        Table(Exporter<W>),
+        Json { out: W, lines: bool, written: u64 },
+    }
+    let file_error = |e: std::io::Error| Error::File(e.to_string());
+    let store = document(connection)?;
+    let mut sink = match &format {
+        ExportFormat::Csv(_) => Sink::Table(Exporter::new(out, format.clone(), columns.clone())?),
+        ExportFormat::Json | ExportFormat::JsonLines => Sink::Json {
+            out,
+            lines: format == ExportFormat::JsonLines,
+            written: 0,
+        },
+        ExportFormat::Sql { .. } => {
+            return Err(Error::Unsupported("SQL statements for documents"));
+        }
+    };
+    request.skip = 0;
+    request.limit = EXPORT_PAGE_ROWS;
+    loop {
+        let page = store.find(request.clone()).await?;
+        match &mut sink {
+            Sink::Table(exporter) => {
+                let rows: Vec<Vec<Value>> = page
+                    .documents
+                    .iter()
+                    .map(|found| {
+                        columns
+                            .iter()
+                            .map(|name| {
+                                found
+                                    .document
+                                    .get(name)
+                                    .map_or(Value::Null, dbclient_core::document::cell)
+                            })
+                            .collect()
+                    })
+                    .collect();
+                exporter.write_rows(&rows)?;
+            }
+            Sink::Json {
+                out,
+                lines,
+                written,
+            } => {
+                for found in &page.documents {
+                    let text = serde_json::to_string(&found.document)
+                        .map_err(|e| Error::Internal(e.to_string()))?;
+                    if *lines {
+                        writeln!(out, "{text}").map_err(file_error)?;
+                    } else {
+                        let separator = if *written == 0 { "[\n  " } else { ",\n  " };
+                        write!(out, "{separator}{text}").map_err(file_error)?;
+                    }
+                    *written += 1;
+                }
+            }
+        }
+        if !page.has_more {
+            break;
+        }
+        request.skip += u64::from(EXPORT_PAGE_ROWS);
+    }
+    match sink {
+        Sink::Table(exporter) => exporter.finish(),
+        Sink::Json {
+            mut out,
+            lines,
+            written,
+        } => {
+            if !lines {
+                let end: &[u8] = if written == 0 { b"[]\n" } else { b"\n]\n" };
+                out.write_all(end).map_err(file_error)?;
+            }
+            out.flush().map_err(file_error)?;
+            Ok(written)
+        }
+    }
+}
+
 /// The collections of a vector database, by name.
 #[tauri::command]
 async fn vector_collections(
@@ -1391,6 +1504,7 @@ macro_rules! handlers {
             doc_databases,
             doc_collections,
             doc_find,
+            export_documents,
             doc_count,
             doc_write,
             vector_collections,

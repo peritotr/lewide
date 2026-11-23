@@ -464,3 +464,76 @@ async fn the_query_tab_speaks_the_console() {
         );
     }
 }
+
+#[tokio::test]
+async fn cancels_a_running_console_search() {
+    for (name, config) in servers() {
+        let conn = ElasticsearchDriver.connect(&config).await.unwrap();
+        let index = "dbclient_test_cancel";
+        let _ = conn
+            .execute_all(QueryRequest {
+                statement: format!("DELETE /{index}"),
+                max_rows: None,
+            })
+            .await;
+        // Enough documents that a script looping in each takes seconds (a sine per
+        // step, which the compiler cannot drop).
+        // Written in ten batches, each refreshed into a segment of its own: the
+        // server looks for a cancellation between segments.
+        for batch in 0..10 {
+            let mut bulk = format!("POST /{index}/_bulk?refresh=true\n");
+            for i in 0..400 {
+                bulk.push_str(&format!(
+                    "{{\"index\": {{}}}}\n{{\"n\": {}}}\n",
+                    batch * 400 + i
+                ));
+            }
+            console(conn.as_ref(), &bulk).await;
+        }
+        let slow = format!(
+            "GET /{index}/_search\n{{\"size\": 1, \"query\": {{\"script_score\": {{\"query\": {{\"match_all\": {{}}}}, \
+             \"script\": {{\"source\": \"double x = 0; for (int i = 0; i < 40000; i++) {{ x += Math.sin(i); }} return 1;\"}}}}}}}}"
+        );
+        let started = std::time::Instant::now();
+        let (search, cancelled) = tokio::join!(
+            conn.execute_all(QueryRequest {
+                statement: slow.clone(),
+                max_rows: None,
+            }),
+            async {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                conn.cancel().await
+            }
+        );
+        cancelled.unwrap();
+        let elapsed = started.elapsed();
+        // The search ends with the server's cancellation, or with what it had
+        // found when it stopped; either way well before it would have finished.
+        match search {
+            Err(Error::Database { message, .. }) => {
+                assert!(
+                    message.to_lowercase().contains("cancel"),
+                    "{name}: {message}"
+                )
+            }
+            Ok(_) => {}
+            Err(other) => panic!("{name}: {other}"),
+        }
+        // The server stops at the next segment; well before the whole search.
+        let uncancelled = std::time::Instant::now();
+        let _ = conn
+            .execute_all(QueryRequest {
+                statement: slow,
+                max_rows: None,
+            })
+            .await;
+        let full = uncancelled.elapsed();
+        assert!(
+            elapsed * 2 < full,
+            "{name}: cancelled after {elapsed:?}, a whole search takes {full:?}"
+        );
+        // Nothing running: cancel does nothing.
+        conn.cancel().await.unwrap();
+        console(conn.as_ref(), &format!("DELETE /{index}")).await;
+    }
+}
