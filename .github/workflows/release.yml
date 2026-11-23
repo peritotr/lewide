@@ -8,11 +8,11 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
   installers:
+    # On the job, as in tauri-action's own example: creating the release needs it.
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
