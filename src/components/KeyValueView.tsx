@@ -211,7 +211,7 @@ export function KeyValueView({ tab, view, conn }: { tab: Tab; view: KeysView; co
   }
 
   return (
-    <main className="relative grid min-h-0 min-w-0 bg-panel" style={{ gridTemplateRows: `34px ${production ? "4px" : "0px"} 36px minmax(0,1fr)` }}>
+    <main className="relative grid min-h-0 min-w-0 grid-cols-[minmax(0,1fr)] bg-panel" style={{ gridTemplateRows: `34px ${production ? "4px" : "0px"} 36px minmax(0,1fr)` }}>
       <TabBar />
       <div title={production ? t("Production connection") : undefined} className={production ? "production-band" : ""} />
 

@@ -201,7 +201,7 @@ export function GraphView({ tab, conn }: { tab: Tab; conn: Conn | null }) {
 
   return (
     <main
-      className="relative grid min-h-0 min-w-0 bg-panel"
+      className="relative grid min-h-0 min-w-0 grid-cols-[minmax(0,1fr)] bg-panel"
       style={{ gridTemplateRows: `34px ${production ? "4px" : "0px"} 40px 104px minmax(0,1fr)` }}
       onKeyDown={(e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {

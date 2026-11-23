@@ -78,6 +78,15 @@ function fieldsFor(driverId: string): Fields {
       return { ...standard, database: { label: msg("Database"), placeholder: "neo4j" } };
     case "clickhouse":
       return { ...standard, database: { label: msg("Database"), placeholder: "default" } };
+    case "couchbase":
+      // Not drawn in the design: the query service's port, and a bucket in place of a database.
+      return { ...standard, database: { label: msg("Bucket"), helper: msg("The first bucket is opened when this is empty.") } };
+    case "influxdb":
+      // Not drawn in the design: InfluxDB 3 signs in with a token alone.
+      return { database: { label: msg("Database"), helper: msg("The first database is used when this is empty.") }, user: false, secret: msg("Token"), options: [] };
+    case "milvus":
+      // Not drawn in the design: without a user, the password field carries a cloud API key.
+      return { ...standard, database: { label: msg("Database"), placeholder: "default", helper: msg("Leave the user empty to send the password as an API key.") } };
     case "elasticsearch":
       // One cluster, no database to choose; an API key replaces user and password.
       return { database: null, user: true, secret: msg("Password"), options: ["apiKey"] };

@@ -56,6 +56,9 @@ scripts/test-servers.sh compat                               # MariaDB, Cockroac
 eval "$(scripts/test-redis.sh up)"; eval "$(scripts/test-redis.sh tls)"
 eval "$(scripts/test-mongodb.sh up)"
 eval "$(scripts/test-qdrant.sh up)"; eval "$(scripts/test-qdrant.sh tls)"
+eval "$(scripts/test-milvus.sh up)"
+eval "$(scripts/test-influxdb.sh up)"
+eval "$(scripts/test-couchbase.sh up)"
 eval "$(scripts/test-pgvector.sh up)"
 eval "$(scripts/test-elasticsearch.sh up)"; eval "$(scripts/test-elasticsearch.sh open)"   # Elasticsearch and OpenSearch
 eval "$(scripts/test-neo4j.sh up)"

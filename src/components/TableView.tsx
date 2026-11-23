@@ -43,6 +43,8 @@ const PAGE_SIZES = [100, 500, 1000, 5000];
 
 const ghost = "flex h-[26px] flex-none items-center gap-[6px] px-s2 text-[12.5px] whitespace-nowrap enabled:hover:bg-hover disabled:cursor-not-allowed disabled:opacity-45";
 const divider = <i className="h-[16px] w-px flex-none bg-line" />;
+// Not drawn in the design: in a narrow pane the toolbar keeps its icons and drops their words.
+const wide = "@max-[720px]:hidden";
 
 export const qualifiedName = (view: View) => [view.namespace, view.name].filter(Boolean).join(".");
 
@@ -65,11 +67,12 @@ export function TableView({ tab, view, conn }: { tab: Tab; view: View; conn: Con
   };
 
   return (
-    <main className="grid min-h-0 min-w-0 bg-panel" style={{ gridTemplateRows: `34px ${production ? "4px" : "0px"} 36px minmax(0,1fr)` }}>
+    // One column no wider than the pane, so a long toolbar cannot widen the whole view.
+    <main className="grid min-h-0 min-w-0 grid-cols-[minmax(0,1fr)] bg-panel" style={{ gridTemplateRows: `34px ${production ? "4px" : "0px"} 36px minmax(0,1fr)` }}>
       <TabBar />
       <div title={production ? t("Production connection") : undefined} className={production ? "production-band" : ""} />
 
-      <div className="flex items-center gap-[10.2px] border-b border-line px-[10.2px] whitespace-nowrap">
+      <div className="@container flex min-w-0 items-center gap-[10.2px] overflow-hidden border-b border-line px-[10.2px] whitespace-nowrap">
         <Segmented
           label={t("View")}
           value={view.mode}
@@ -90,30 +93,30 @@ export function TableView({ tab, view, conn }: { tab: Tab; view: View; conn: Con
           </>
         ) : (
           <div className="ml-auto flex items-center gap-[2px]">
-            <button type="button" className={ghost} disabled={!canEdit} onClick={() => addTableRow(tab.id)}>
+            <button type="button" className={ghost} disabled={!canEdit} title={t("Add row")} onClick={() => addTableRow(tab.id)}>
               <Plus size={13} />
-              {t("Add row")}
+              <span className={wide}>{t("Add row")}</span>
             </button>
-            <button type="button" className={ghost} disabled={!canEdit || !active} title={canEdit && !active ? t("Select a cell in the row first.") : undefined} onClick={deleteActive}>
+            <button type="button" className={ghost} disabled={!canEdit || !active} title={canEdit && !active ? t("Select a cell in the row first.") : t("Delete row")} onClick={deleteActive}>
               <Minus size={13} />
-              {t("Delete row")}
+              <span className={wide}>{t("Delete row")}</span>
             </button>
             {divider}
-            <button type="button" className={ghost} disabled={view.loading} onClick={() => loadPage(tab.id)}>
+            <button type="button" className={ghost} disabled={view.loading} title={t("Refresh")} onClick={() => loadPage(tab.id)}>
               <RefreshCw size={13} />
-              {t("Refresh")}
+              <span className={wide}>{t("Refresh")}</span>
             </button>
-            <button type="button" className={ghost} disabled={!view.page || !conn || isView} onClick={() => conn && openDialog({ kind: "import", connId: conn.id, tabId: tab.id })}>
+            <button type="button" className={ghost} disabled={!view.page || !conn || isView} title={t("Import")} onClick={() => conn && openDialog({ kind: "import", connId: conn.id, tabId: tab.id })}>
               <Upload size={13} />
-              {t("Import")}
+              <span className={wide}>{t("Import")}</span>
             </button>
-            <button type="button" className={ghost} disabled={!view.page || !conn} onClick={() => conn && openDialog({ kind: "export", connId: conn.id, source: { kind: "table", tabId: tab.id } })}>
+            <button type="button" className={ghost} disabled={!view.page || !conn} title={t("Export")} onClick={() => conn && openDialog({ kind: "export", connId: conn.id, source: { kind: "table", tabId: tab.id } })}>
               <Download size={13} />
-              {t("Export")}
+              <span className={wide}>{t("Export")}</span>
             </button>
-            <button type="button" className={ghost} disabled={!view.page} aria-haspopup="menu" onClick={(e) => setColumnsMenu(anchorOf(e.currentTarget))}>
+            <button type="button" className={ghost} disabled={!view.page} title={t("Columns")} aria-haspopup="menu" onClick={(e) => setColumnsMenu(anchorOf(e.currentTarget))}>
               <Columns3 size={13} />
-              {t("Columns")}
+              <span className={wide}>{t("Columns")}</span>
               {view.hidden.length > 0 && <span className="font-mono text-[11px] text-text-3">{(view.page?.columns.length ?? 0) - view.hidden.length}/{view.page?.columns.length}</span>}
             </button>
             {columnsMenu && view.page && (
@@ -239,7 +242,7 @@ function DataView({ tab, view, conn, estimate, isView, canEdit, onActive }: { ta
   }, [tab.id]);
 
   return (
-    <div className="grid min-h-0" style={{ gridTemplateRows: `36px auto minmax(0,1fr) auto 30px` }}>
+    <div className="grid min-h-0 grid-cols-[minmax(0,1fr)]" style={{ gridTemplateRows: `36px auto minmax(0,1fr) auto 30px` }}>
       <FilterBar tab={tab} view={view} columns={page?.columns ?? []} dialect={dialectOf(conn?.driver.id ?? "")} />
 
       <div>
@@ -850,7 +853,7 @@ function Footer({ tab, view, estimate, first, last, keys, locked }: { tab: Tab; 
   }
 
   return (
-    <div className="flex items-center gap-s3 border-t border-line bg-bg px-[10.2px] text-[12px] whitespace-nowrap text-text-2">
+    <div className="flex min-w-0 items-center gap-s3 overflow-hidden border-t border-line bg-bg px-[10.2px] text-[12px] whitespace-nowrap text-text-2">
       {total}
       {divider}
       <IconButton label={t("Previous page")} size={22} disabled={view.loading || view.offset === 0} onClick={() => loadPage(tab.id, { offset: Math.max(0, view.offset - view.pageSize) })}>
@@ -902,7 +905,7 @@ function Footer({ tab, view, estimate, first, last, keys, locked }: { tab: Tab; 
           {t("Read-only")}
         </span>
       ) : (
-        <span>{t("Editable · key {key}", { key: keys.join(", ") })}</span>
+        <span className="min-w-0 truncate">{t("Editable · key {key}", { key: keys.join(", ") })}</span>
       )}
     </div>
   );

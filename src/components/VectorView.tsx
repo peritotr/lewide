@@ -150,7 +150,7 @@ export function VectorView({ tab, collection, conn }: { tab: Tab; collection: st
 
   return (
     <main
-      className="grid min-h-0 min-w-0 bg-panel"
+      className="grid min-h-0 min-w-0 grid-cols-[minmax(0,1fr)] bg-panel"
       style={{ gridTemplateRows: `34px ${production ? "4px" : "0px"} 36px minmax(0,1fr)` }}
       onKeyDown={(e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {

@@ -60,9 +60,12 @@ MongoDB Compass, RedisInsight, Neo4j Browser and Kibana Dev Tools, LewIDE puts t
 | ![Qdrant](https://img.shields.io/badge/-Qdrant-DC244C) | Qdrant | Vector similarity search with payload filters |
 | ![Elasticsearch](https://img.shields.io/badge/-Elasticsearch-005571?logo=elasticsearch&logoColor=white) | Elasticsearch, OpenSearch | Search indices with Query DSL or query strings, edit documents, Dev Tools requests |
 | ![pgvector](https://img.shields.io/badge/-pgvector-4169E1?logo=postgresql&logoColor=white) | pgvector | Vector search on PostgreSQL tables, with SQL beside it |
+| ![Milvus](https://img.shields.io/badge/-Milvus-00A1EA?logo=milvus&logoColor=white) | Milvus | Vector similarity search with filters, named vectors |
+| ![InfluxDB](https://img.shields.io/badge/-InfluxDB-22ADF6?logo=influxdb&logoColor=white) | InfluxDB 3 | SQL over time series: read-only grid, tags and fields in the structure |
+| ![Couchbase](https://img.shields.io/badge/-Couchbase-EA2328?logo=couchbase&logoColor=white) | Couchbase | Documents by bucket and collection, edited in place; SQL++ in query tabs |
 | ![Neo4j](https://img.shields.io/badge/-Neo4j-4581C3?logo=neo4j&logoColor=white) | Neo4j | Cypher with a graph canvas, a table and text |
 
-More are on the way: Milvus, InfluxDB, Couchbase, Oracle, Snowflake, BigQuery and others. See the [roadmap](ROADMAP.md).
+More are on the way: Oracle, Snowflake, BigQuery and others. See the [roadmap](ROADMAP.md).
 
 ## A closer look
 

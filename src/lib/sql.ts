@@ -172,7 +172,7 @@ export function statementAt(
 }
 
 export function dialectOf(driverId: string | undefined): SqlDialect {
-  return driverId === "mysql" ? "mysql" : driverId === "sqlite" ? "sqlite" : driverId === "sqlserver" ? "sqlserver" : driverId === "clickhouse" ? "clickhouse" : driverId === "duckdb" ? "duckdb" : "postgres";
+  return driverId === "mysql" ? "mysql" : driverId === "sqlite" ? "sqlite" : driverId === "sqlserver" ? "sqlserver" : driverId === "clickhouse" ? "clickhouse" : driverId === "duckdb" || driverId === "influxdb" ? "duckdb" : "postgres";
 }
 
 /** MySQL quotes identifiers with backticks, SQL Server with brackets; the others use the SQL standard form. */

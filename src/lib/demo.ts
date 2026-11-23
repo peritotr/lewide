@@ -15,6 +15,12 @@ const mongodb: DriverInfo = { id: "mongodb", name: "MongoDB", model: "document",
 // Serves Elasticsearch and OpenSearch; the demo answers its document calls like MongoDB's.
 const elasticsearch: DriverInfo = { id: "elasticsearch", name: "Elasticsearch", model: "document", capabilities: store, default_port: 9200, desktop_only: false };
 const qdrant: DriverInfo = { id: "qdrant", name: "Qdrant", model: "vector", capabilities: { ...store, vector_search: true }, default_port: 6333, desktop_only: false };
+// Listed so the picker offers it; there is no sample connection.
+// Listed so the picker offers it; there is no sample connection.
+const couchbase: DriverInfo = { id: "couchbase", name: "Couchbase", model: "document", capabilities: { ...store, sql: true }, default_port: 8093, desktop_only: false };
+// Listed so the picker offers it; there is no sample connection.
+const influxdb: DriverInfo = { id: "influxdb", name: "InfluxDB", model: "relational", capabilities: { ...caps, transactions: false, cancel: false }, default_port: 8181, desktop_only: false };
+const milvus: DriverInfo = { id: "milvus", name: "Milvus", model: "vector", capabilities: { ...store, vector_search: true }, default_port: 19530, desktop_only: false };
 // PostgreSQL underneath, so it keeps SQL and transactions; the demo answers its vector calls like Qdrant's.
 const pgvector: DriverInfo = { id: "pgvector", name: "pgvector", model: "vector", capabilities: { ...caps, vector_search: true }, default_port: 5432, desktop_only: false };
 const neo4j: DriverInfo = { id: "neo4j", name: "Neo4j", model: "graph", capabilities: store, default_port: 7474, desktop_only: false };
@@ -108,7 +114,7 @@ function statuses(): QueryResult {
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const demoBackend: Backend = {
-  listDrivers: async () => [elasticsearch, mongodb, mysql, neo4j, pgvector, postgres, qdrant, redis, sqlite],
+  listDrivers: async () => [couchbase, elasticsearch, influxdb, milvus, mongodb, mysql, neo4j, pgvector, postgres, qdrant, redis, sqlite],
   openConnection: async () => 1,
   closeConnection: async () => {},
   runQuery: async (_session, statement) => {
@@ -401,7 +407,7 @@ export function seedDemo() {
     id,
   });
   replaceState({
-    drivers: [elasticsearch, mongodb, mysql, neo4j, pgvector, postgres, qdrant, redis, sqlite],
+    drivers: [couchbase, elasticsearch, influxdb, milvus, mongodb, mysql, neo4j, pgvector, postgres, qdrant, redis, sqlite],
     connections: [
       conn("d1", "acme-prod", "production", 1, true),
       conn("d2", "acme-staging", "staging", 2, true),

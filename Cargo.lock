@@ -1400,8 +1400,11 @@ dependencies = [
  "dbclient-ai",
  "dbclient-core",
  "dbclient-driver-clickhouse",
+ "dbclient-driver-couchbase",
  "dbclient-driver-duckdb",
  "dbclient-driver-elasticsearch",
+ "dbclient-driver-influxdb",
+ "dbclient-driver-milvus",
  "dbclient-driver-mongodb",
  "dbclient-driver-mysql",
  "dbclient-driver-neo4j",
@@ -1467,6 +1470,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbclient-driver-couchbase"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "dbclient-core",
+ "futures-util",
+ "reqwest",
+ "rustls",
+ "serde_json",
+ "tokio",
+ "webpki-roots",
+]
+
+[[package]]
 name = "dbclient-driver-duckdb"
 version = "0.1.0"
 dependencies = [
@@ -1484,6 +1501,33 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "dbclient-core",
+ "reqwest",
+ "rustls",
+ "serde_json",
+ "tokio",
+ "webpki-roots",
+]
+
+[[package]]
+name = "dbclient-driver-influxdb"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "dbclient-core",
+ "reqwest",
+ "rustls",
+ "serde_json",
+ "tokio",
+ "webpki-roots",
+]
+
+[[package]]
+name = "dbclient-driver-milvus"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "dbclient-core",
+ "futures-util",
  "reqwest",
  "rustls",
  "serde_json",

@@ -135,7 +135,7 @@ function Workspace({ tab, conn }: { tab: Tab; conn: Conn | null }) {
 
   return (
     <main
-      className="grid min-h-0 min-w-0 bg-panel"
+      className="grid min-h-0 min-w-0 grid-cols-[minmax(0,1fr)] bg-panel"
       // Tab bar / Production band (only for Production) / toolbar / notice / editor / results.
       style={{ gridTemplateRows: `34px ${production ? "4px" : "0px"} 40px minmax(0,1fr)` }}
     >

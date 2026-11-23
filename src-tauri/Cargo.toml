@@ -42,6 +42,9 @@ dbclient-driver-mysql = { version = "0.1.0", path = "../crates/driver-mysql" }
 dbclient-driver-redis = { version = "0.1.0", path = "../crates/driver-redis" }
 dbclient-driver-pgvector = { version = "0.1.0", path = "../crates/driver-pgvector" }
 dbclient-driver-qdrant = { version = "0.1.0", path = "../crates/driver-qdrant" }
+dbclient-driver-milvus = { version = "0.1.0", path = "../crates/driver-milvus" }
+dbclient-driver-influxdb = { version = "0.1.0", path = "../crates/driver-influxdb" }
+dbclient-driver-couchbase = { version = "0.1.0", path = "../crates/driver-couchbase" }
 dbclient-driver-neo4j = { version = "0.1.0", path = "../crates/driver-neo4j" }
 dbclient-driver-elasticsearch = { version = "0.1.0", path = "../crates/driver-elasticsearch" }
 dbclient-driver-mongodb = { version = "0.1.0", path = "../crates/driver-mongodb" }

@@ -47,7 +47,7 @@ hepsini tek yerde toplar.
 ## Desteklenen veritabanları
 
 PostgreSQL, CockroachDB, YugabyteDB, TimescaleDB, MySQL, MariaDB, TiDB, SQLite, Microsoft SQL Server,
-ClickHouse, DuckDB (sunucusuz, uygulamanın içinde), Redis, Valkey, MongoDB, Qdrant, pgvector, Elasticsearch, OpenSearch ve Neo4j.
+ClickHouse, DuckDB (sunucusuz, uygulamanın içinde), InfluxDB 3, Redis, Valkey, MongoDB, Couchbase, Qdrant, Milvus, pgvector, Elasticsearch, OpenSearch ve Neo4j.
 Ayrıntılar için [İngilizce README](README.md#supported-databases), sıradakiler
 için [yol haritası](ROADMAP.md).
 

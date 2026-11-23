@@ -67,12 +67,15 @@ impl AppState {
         registry.register(dbclient_driver_mysql::MysqlDriver);
         registry.register(dbclient_driver_redis::RedisDriver);
         registry.register(dbclient_driver_qdrant::QdrantDriver);
+        registry.register(dbclient_driver_milvus::MilvusDriver);
         registry.register(dbclient_driver_pgvector::PgvectorDriver);
         registry.register(dbclient_driver_elasticsearch::ElasticsearchDriver);
         registry.register(dbclient_driver_neo4j::Neo4jDriver);
         registry.register(dbclient_driver_mongodb::MongoDriver);
+        registry.register(dbclient_driver_couchbase::CouchbaseDriver);
         registry.register(dbclient_driver_sqlserver::SqlServerDriver);
         registry.register(dbclient_driver_clickhouse::ClickHouseDriver);
+        registry.register(dbclient_driver_influxdb::InfluxDbDriver);
         registry.register(dbclient_driver_duckdb::DuckDbDriver);
         Self {
             registry,
@@ -1638,8 +1641,11 @@ mod ipc_tests {
         // More drivers join over time; these are the ones this test relies on.
         for id in [
             "clickhouse",
+            "couchbase",
             "duckdb",
             "elasticsearch",
+            "influxdb",
+            "milvus",
             "mongodb",
             "mysql",
             "neo4j",

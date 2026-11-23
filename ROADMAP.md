@@ -24,6 +24,9 @@ yet. It changes as work lands.
 | pgvector | ✅ Supported | Tables with a vector column searched like a vector database; SQL as usual |
 | Qdrant | ✅ Supported | Vector search with payload filters; search by text needs an embedding provider |
 | Neo4j | ✅ Supported | Graph canvas, table and text views; Cypher highlighting still to come |
+| Milvus | ✅ Supported | Vector search with filters and named vectors; read-only |
+| InfluxDB 3 | ✅ Supported | SQL over time series; read-only grid (InfluxDB is written with line protocol) |
+| Couchbase | ✅ Supported | Documents by bucket and collection, edited in place; SQL++ in query tabs |
 | DuckDB | ✅ Supported | Embedded, built into the app; editing and column changes |
 
 Across all of them: saved connections with passwords in the system
@@ -34,7 +37,7 @@ before every write), English and Turkish, light and dark themes.
 
 **Connection types** (order agreed one at a time):
 
-- Oracle, Snowflake, BigQuery, InfluxDB, Couchbase, Milvus
+- Oracle, Snowflake, BigQuery
 
 **Finishing what exists**
 

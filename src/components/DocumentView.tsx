@@ -44,6 +44,8 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
   const production = conn?.environment === "production";
   // Elasticsearch and OpenSearch share this view; the commands it shows are written in their terms.
   const search = conn?.driver.id === "elasticsearch";
+  // Couchbase too: its commands are SQL++ (Not drawn in the design).
+  const couch = conn?.driver.id === "couchbase";
 
   const [mode, setMode] = useState<Mode>("tree");
   const [info, setInfo] = useState<DocCollectionInfo | null>(null);
@@ -154,7 +156,11 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
   const setField = (id: unknown, path: string, value: unknown) =>
     write(
       { op: "update", id, update: JSON.stringify({ $set: { [path]: value } }) },
-      search ? `PUT /${collection}/_doc/${idText(id)}  (${path}: …)` : `db.${collection}.updateOne({_id: ${idText(id)}}, {$set: {${path}: …}})`,
+      search
+        ? `PUT /${collection}/_doc/${idText(id)}  (${path}: …)`
+        : couch
+          ? `UPDATE ${database}.${collection} USE KEYS ${JSON.stringify(idText(id))} SET ${path} = …`
+          : `db.${collection}.updateOne({_id: ${idText(id)}}, {$set: {${path}: …}})`,
       t("Updated {path}", { path }),
     );
 
@@ -216,7 +222,7 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
   );
 
   return (
-    <main className="relative grid min-h-0 min-w-0 bg-panel" style={{ gridTemplateRows: `34px ${production ? "4px" : "0px"} 36px auto minmax(0,1fr) 30px` }}>
+    <main className="relative grid min-h-0 min-w-0 grid-cols-[minmax(0,1fr)] bg-panel" style={{ gridTemplateRows: `34px ${production ? "4px" : "0px"} 36px auto minmax(0,1fr) 30px` }}>
       <TabBar />
       <div title={production ? t("Production connection") : undefined} className={production ? "production-band" : ""} />
 
@@ -266,9 +272,19 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
       >
         <div className="flex items-end gap-s2">
           {/* Not drawn in the design: the hint on what Elasticsearch's filter field takes. */}
-          {field("filter", t("Filter"), "flex-1", search ? "{ }  ·  city:İzmir AND year:>2023" : "{ }", search ? t("Query DSL, a {\"field\": value} shorthand, or query string text such as city:İzmir AND year:>2023") : undefined)}
+          {field(
+            "filter",
+            t("Filter"),
+            "flex-1",
+            search ? "{ }  ·  city:İzmir AND year:>2023" : couch ? "{ }  ·  city = \"İzmir\" AND total > 10" : "{ }",
+            search
+              ? t("Query DSL, a {\"field\": value} shorthand, or query string text such as city:İzmir AND year:>2023")
+              : couch
+                ? t("A {\"field\": value} shorthand ($gt, $in… as in MongoDB), or SQL++ that follows WHERE")
+                : undefined,
+          )}
           {field("projection", t("Project"), "w-[150px] flex-none", "{ }")}
-          {field("sort", t("Sort"), "w-[190px] flex-none", search ? "{ year: -1 }" : "{ _id: 1 }")}
+          {field("sort", t("Sort"), "w-[190px] flex-none", search || couch ? "{ year: -1 }" : "{ _id: 1 }")}
           {field("limit", t("Limit"), "w-[70px] flex-none", "50")}
           <Button type="submit" variant="primary" disabled={loading}>
             {t("Find")} ↵
@@ -382,10 +398,10 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
       {adding && (
         <AddDocument
           production={production}
-          search={search}
+          search={search || couch}
           onClose={() => setAdding(false)}
           onAdd={(text, after) =>
-            write({ op: "insert", document: text }, `${search ? `POST /${collection}/_doc ` : `db.${collection}.insertOne(`}${text.length > 300 ? `${text.slice(0, 300)}…` : text}${search ? "" : ")"}`, t("Document added"), {
+            write({ op: "insert", document: text }, `${search ? `POST /${collection}/_doc ` : couch ? `INSERT INTO ${database}.${collection} VALUES ` : `db.${collection}.insertOne(`}${text.length > 300 ? `${text.slice(0, 300)}…` : text}${search || couch ? "" : ")"}`, t("Document added"), {
               ok: () => {
                 setAdding(false);
                 after.ok();

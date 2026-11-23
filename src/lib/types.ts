@@ -39,12 +39,12 @@ export const TYPE_GROUPS: { model: string; types: DatabaseType[] }[] = [
     ],
   },
   { model: msg("Analytic"), types: [{ code: "Ch", name: "ClickHouse", driver: "clickhouse" }, { code: "Dk", name: "DuckDB", driver: "duckdb" }, { code: "Sf", name: "Snowflake" }, { code: "Bq", name: "BigQuery" }] },
-  { model: msg("Document"), types: [{ code: "Mg", name: "MongoDB", driver: "mongodb" }, { code: "Cb", name: "Couchbase" }] },
+  { model: msg("Document"), types: [{ code: "Mg", name: "MongoDB", driver: "mongodb" }, { code: "Cb", name: "Couchbase", driver: "couchbase", user: "Administrator" }] },
   { model: msg("Key-value"), types: [{ code: "Rd", name: "Redis", driver: "redis" }, { code: "Vk", name: "Valkey", driver: "redis" }] },
-  { model: msg("Vector"), types: [{ code: "Qd", name: "Qdrant", driver: "qdrant" }, { code: "Pv", name: "pgvector", driver: "pgvector" }, { code: "Mv", name: "Milvus" }] },
+  { model: msg("Vector"), types: [{ code: "Qd", name: "Qdrant", driver: "qdrant" }, { code: "Pv", name: "pgvector", driver: "pgvector" }, { code: "Mv", name: "Milvus", driver: "milvus", user: "root", database: "default" }] },
   { model: msg("Graph"), types: [{ code: "N4", name: "Neo4j", driver: "neo4j" }] },
   // TimescaleDB is a PostgreSQL extension: the PostgreSQL driver serves it.
-  { model: msg("Time series"), types: [{ code: "Ts", name: "TimescaleDB", driver: "postgres", user: "postgres", database: "postgres" }, { code: "If", name: "InfluxDB" }] },
+  { model: msg("Time series"), types: [{ code: "Ts", name: "TimescaleDB", driver: "postgres", user: "postgres", database: "postgres" }, { code: "If", name: "InfluxDB", driver: "influxdb" }] },
   { model: msg("Search"), types: [{ code: "Es", name: "Elasticsearch", driver: "elasticsearch" }, { code: "Os", name: "OpenSearch", driver: "elasticsearch", port: 9200 }] },
 ];
 

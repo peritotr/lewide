@@ -31,7 +31,11 @@ impl PointId {
         let text = text.trim();
         // The largest 64-bit number has 20 digits. Longer runs of digits are a
         // UUID written without hyphens, even when zeros make the number small.
-        let digits = text.len() <= 20 && text.bytes().all(|b| b.is_ascii_digit());
+        // A leading zero makes it text too: a text key such as "007" (Milvus)
+        // would otherwise come back as 7.
+        let digits = text.len() <= 20
+            && text.bytes().all(|b| b.is_ascii_digit())
+            && (text == "0" || !text.starts_with('0'));
         match text.parse::<u64>() {
             Ok(number) if digits => PointId::Number(number),
             _ => PointId::Uuid(text.to_owned()),
@@ -321,6 +325,8 @@ mod tests {
             read(r#""00000000000000000000000000000001""#),
             PointId::Uuid("00000000000000000000000000000001".into())
         );
+        assert_eq!(read(r#""007""#), PointId::Uuid("007".into()));
+        assert_eq!(read(r#""0""#), PointId::Number(0));
         assert!(serde_json::from_str::<PointId>("-1").is_err());
         assert!(serde_json::from_str::<PointId>("1.5").is_err());
     }

@@ -117,6 +117,12 @@ jobs:
             up: scripts/test-pgvector.sh up
           - engine: qdrant
             up: scripts/test-qdrant.sh up && scripts/test-qdrant.sh tls
+          - engine: milvus
+            up: scripts/test-milvus.sh up
+          - engine: influxdb
+            up: scripts/test-influxdb.sh up
+          - engine: couchbase
+            up: scripts/test-couchbase.sh up
           - engine: neo4j
             up: scripts/test-neo4j.sh up
           - engine: clickhouse
