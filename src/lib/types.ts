@@ -37,7 +37,7 @@ export const TYPE_GROUPS: { model: string; types: DatabaseType[] }[] = [
   { model: msg("Vector"), types: [{ code: "Qd", name: "Qdrant", driver: "qdrant" }, { code: "Pv", name: "pgvector", driver: "pgvector" }, { code: "Mv", name: "Milvus" }] },
   { model: msg("Graph"), types: [{ code: "N4", name: "Neo4j", driver: "neo4j" }] },
   { model: msg("Time series"), types: [{ code: "Ts", name: "TimescaleDB" }, { code: "If", name: "InfluxDB" }] },
-  { model: msg("Search"), types: [{ code: "Es", name: "Elasticsearch" }, { code: "Os", name: "OpenSearch" }] },
+  { model: msg("Search"), types: [{ code: "Es", name: "Elasticsearch", driver: "elasticsearch" }, { code: "Os", name: "OpenSearch", driver: "elasticsearch", port: 9200 }] },
 ];
 
 const ALL = TYPE_GROUPS.flatMap((g) => g.types);

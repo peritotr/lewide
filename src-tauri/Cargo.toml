@@ -43,6 +43,7 @@ dbclient-driver-redis = { version = "0.1.0", path = "../crates/driver-redis" }
 dbclient-driver-pgvector = { version = "0.1.0", path = "../crates/driver-pgvector" }
 dbclient-driver-qdrant = { version = "0.1.0", path = "../crates/driver-qdrant" }
 dbclient-driver-neo4j = { version = "0.1.0", path = "../crates/driver-neo4j" }
+dbclient-driver-elasticsearch = { version = "0.1.0", path = "../crates/driver-elasticsearch" }
 dbclient-driver-mongodb = { version = "0.1.0", path = "../crates/driver-mongodb" }
 dbclient-driver-sqlserver = { version = "0.1.0", path = "../crates/driver-sqlserver" }
 dbclient-driver-clickhouse = { version = "0.1.0", path = "../crates/driver-clickhouse" }

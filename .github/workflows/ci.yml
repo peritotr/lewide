@@ -89,6 +89,8 @@ jobs:
             up: scripts/test-redis.sh up && scripts/test-redis.sh tls
           - engine: mongodb
             up: scripts/test-mongodb.sh up
+          - engine: elasticsearch
+            up: scripts/test-elasticsearch.sh up && scripts/test-elasticsearch.sh open
           - engine: pgvector
             up: scripts/test-pgvector.sh up
           - engine: qdrant

@@ -42,6 +42,8 @@ const idText = (id: unknown) => (isContainer(id) ? JSON.stringify(id) : scalarTe
 export function DocumentView({ tab: _tab, database, collection, conn }: { tab: Tab; database: string; collection: string; conn: Conn | null }) {
   const session = conn?.session ?? null;
   const production = conn?.environment === "production";
+  // Elasticsearch and OpenSearch share this view; the commands it shows are written in their terms.
+  const search = conn?.driver.id === "elasticsearch";
 
   const [mode, setMode] = useState<Mode>("tree");
   const [info, setInfo] = useState<DocCollectionInfo | null>(null);
@@ -150,7 +152,11 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
   };
 
   const setField = (id: unknown, path: string, value: unknown) =>
-    write({ op: "update", id, update: JSON.stringify({ $set: { [path]: value } }) }, `db.${collection}.updateOne({_id: ${idText(id)}}, {$set: {${path}: …}})`, t("Updated {path}", { path }));
+    write(
+      { op: "update", id, update: JSON.stringify({ $set: { [path]: value } }) },
+      search ? `PUT /${collection}/_doc/${idText(id)}  (${path}: …)` : `db.${collection}.updateOne({_id: ${idText(id)}}, {$set: {${path}: …}})`,
+      t("Updated {path}", { path }),
+    );
 
   const remove = (id: unknown) =>
     setConfirm({
@@ -192,8 +198,8 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
     );
   }
 
-  const field = (part: keyof Query, name: string, className: string, placeholder: string) => (
-    <label className={`flex min-w-0 flex-col gap-[3px] ${className}`}>
+  const field = (part: keyof Query, name: string, className: string, placeholder: string, hint?: string) => (
+    <label title={hint} className={`flex min-w-0 flex-col gap-[3px] ${className}`}>
       <span className={label}>{name}</span>
       <input
         aria-label={name}
@@ -259,9 +265,10 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
         }}
       >
         <div className="flex items-end gap-s2">
-          {field("filter", t("Filter"), "flex-1", "{ }")}
+          {/* Not drawn in the design: the hint on what Elasticsearch's filter field takes. */}
+          {field("filter", t("Filter"), "flex-1", search ? "{ }  ·  city:İzmir AND year:>2023" : "{ }", search ? t("Query DSL, a {\"field\": value} shorthand, or query string text such as city:İzmir AND year:>2023") : undefined)}
           {field("projection", t("Project"), "w-[150px] flex-none", "{ }")}
-          {field("sort", t("Sort"), "w-[190px] flex-none", "{ _id: 1 }")}
+          {field("sort", t("Sort"), "w-[190px] flex-none", search ? "{ year: -1 }" : "{ _id: 1 }")}
           {field("limit", t("Limit"), "w-[70px] flex-none", "50")}
           <Button type="submit" variant="primary" disabled={loading}>
             {t("Find")} ↵
@@ -375,9 +382,10 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
       {adding && (
         <AddDocument
           production={production}
+          search={search}
           onClose={() => setAdding(false)}
           onAdd={(text, after) =>
-            write({ op: "insert", document: text }, `db.${collection}.insertOne(${text.length > 300 ? `${text.slice(0, 300)}…` : text})`, t("Document added"), {
+            write({ op: "insert", document: text }, `${search ? `POST /${collection}/_doc ` : `db.${collection}.insertOne(`}${text.length > 300 ? `${text.slice(0, 300)}…` : text}${search ? "" : ")"}`, t("Document added"), {
               ok: () => {
                 setAdding(false);
                 after.ok();
@@ -398,7 +406,7 @@ interface WriteOutcome {
 
 // Not drawn in the design: the document is written as text, as in the query fields.
 // It stays open until the server accepts the document, so a refusal does not lose the text.
-function AddDocument({ production, onClose, onAdd }: { production: boolean; onClose(): void; onAdd(text: string, after: WriteOutcome): void }) {
+function AddDocument({ production, search, onClose, onAdd }: { production: boolean; search: boolean; onClose(): void; onAdd(text: string, after: WriteOutcome): void }) {
   const [text, setText] = useState('{\n  "name": ""\n}');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -448,7 +456,9 @@ function AddDocument({ production, onClose, onAdd }: { production: boolean; onCl
         {error ? (
           <p role="alert" className="selectable font-mono text-[12px] break-words text-danger">{error}</p>
         ) : (
-          <p className="text-[12px] text-text-2">{t("Extended JSON or shell syntax, such as ObjectId(\"…\") and ISODate(\"…\"). Without an _id the server gives one.")}</p>
+          <p className="text-[12px] text-text-2">
+            {search ? t("JSON. Without an _id the server gives one; an _id that is taken is refused.") : t("Extended JSON or shell syntax, such as ObjectId(\"…\") and ISODate(\"…\"). Without an _id the server gives one.")}
+          </p>
         )}
       </div>
     </Dialog>

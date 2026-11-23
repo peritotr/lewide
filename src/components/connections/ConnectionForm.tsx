@@ -78,6 +78,9 @@ function fieldsFor(driverId: string): Fields {
       return { ...standard, database: { label: msg("Database"), placeholder: "neo4j" } };
     case "clickhouse":
       return { ...standard, database: { label: msg("Database"), placeholder: "default" } };
+    case "elasticsearch":
+      // One cluster, no database to choose; an API key replaces user and password.
+      return { database: null, user: true, secret: msg("Password"), options: ["apiKey"] };
     case "pgvector":
       return { ...standard, options: ["metric"] };
     case "sqlite":
