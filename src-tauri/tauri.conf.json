@@ -26,6 +26,16 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "LewIDE contributors",
+    "copyright": "Copyright (c) 2026 LewIDE contributors. MIT OR Apache-2.0.",
+    "homepage": "https://github.com/peritotr/lewide",
+    "category": "DeveloperTool",
+    "shortDescription": "An open-source desktop client for every database",
+    "longDescription": "LewIDE opens relational, document, key-value, vector and graph databases in one desktop app, with a SQL editor, a data grid, structure views, import and export, and an AI assistant that sees only the schema.",
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "11.0"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
