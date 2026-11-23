@@ -45,7 +45,13 @@ jobs:
       - run: pnpm i18n:check
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # The desktop shell's test binary has no Windows application manifest, so
+      # Windows refuses to start it (STATUS_ENTRYPOINT_NOT_FOUND). Its IPC tests
+      # run on macOS and Linux; everything else runs here too.
       - run: cargo test --workspace
+        if: runner.os != 'Windows'
+      - run: cargo test --workspace --exclude dbclient
+        if: runner.os == 'Windows'
 
   integration:
     runs-on: ubuntu-22.04
