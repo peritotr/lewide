@@ -33,6 +33,8 @@ interface Confirm {
   body: ReactNode;
   submit: string;
   run(): void;
+  /** Called when the user declines, so whoever asked can stop waiting. */
+  cancel?(): void;
 }
 
 const idText = (id: unknown) => (isContainer(id) ? JSON.stringify(id) : scalarText(id));
@@ -115,7 +117,8 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
     return () => clearTimeout(timer);
   }, [notice]);
 
-  const write = (change: DocumentChange, describe: string, done: string) => {
+  /** `after` lets a dialog stay open and show the server's refusal itself. */
+  const write = (change: DocumentChange, describe: string, done: string, after?: WriteOutcome) => {
     if (session === null) return;
     const go = async () => {
       try {
@@ -125,8 +128,10 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
         setTotal(null);
         void find(applied, skip);
         if (change.op !== "update") loadInfo();
+        after?.ok();
       } catch (e) {
-        setNotice({ text: errorMessage(e), error: true });
+        if (after) after.failed(errorMessage(e));
+        else setNotice({ text: errorMessage(e), error: true });
       }
     };
     if (!production) return void go();
@@ -140,6 +145,7 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
       ),
       submit: t("Run"),
       run: () => void go(),
+      cancel: () => after?.failed(""),
     });
   };
 
@@ -335,8 +341,12 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
           title={confirm.title}
           width={480}
           alert
+          nested={adding}
           band={production ? "production" : undefined}
-          onClose={() => setConfirm(null)}
+          onClose={() => {
+            confirm.cancel?.();
+            setConfirm(null);
+          }}
           onSubmit={() => {
             const go = confirm.run;
             setConfirm(null);
@@ -344,7 +354,13 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
           }}
           footer={
             <>
-              <Button variant="ghost" onClick={() => setConfirm(null)}>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  confirm.cancel?.();
+                  setConfirm(null);
+                }}
+              >
                 {t("Cancel")}
               </Button>
               <Button type="submit" variant="danger">
@@ -360,32 +376,57 @@ export function DocumentView({ tab: _tab, database, collection, conn }: { tab: T
         <AddDocument
           production={production}
           onClose={() => setAdding(false)}
-          onAdd={(text) => {
-            setAdding(false);
-            write({ op: "insert", document: text }, `db.${collection}.insertOne(${text.length > 300 ? `${text.slice(0, 300)}…` : text})`, t("Document added"));
-          }}
+          onAdd={(text, after) =>
+            write({ op: "insert", document: text }, `db.${collection}.insertOne(${text.length > 300 ? `${text.slice(0, 300)}…` : text})`, t("Document added"), {
+              ok: () => {
+                setAdding(false);
+                after.ok();
+              },
+              failed: after.failed,
+            })
+          }
         />
       )}
     </main>
   );
 }
 
+interface WriteOutcome {
+  ok(): void;
+  failed(message: string): void;
+}
+
 // Not drawn in the design: the document is written as text, as in the query fields.
-function AddDocument({ production, onClose, onAdd }: { production: boolean; onClose(): void; onAdd(text: string): void }) {
+// It stays open until the server accepts the document, so a refusal does not lose the text.
+function AddDocument({ production, onClose, onAdd }: { production: boolean; onClose(): void; onAdd(text: string, after: WriteOutcome): void }) {
   const [text, setText] = useState('{\n  "name": ""\n}');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const submit = () => {
+    if (!text.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    onAdd(text, {
+      ok: () => setBusy(false),
+      failed: (message) => {
+        setBusy(false);
+        setError(message);
+      },
+    });
+  };
   return (
     <Dialog
       title={t("Add document")}
       width={560}
       band={production ? "production" : undefined}
       onClose={onClose}
-      onSubmit={() => text.trim() && onAdd(text)}
+      onSubmit={submit}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             {t("Cancel")}
           </Button>
-          <Button type="submit" variant="primary" disabled={!text.trim()}>
+          <Button type="submit" variant="primary" disabled={!text.trim() || busy}>
             {t("Add document")}
           </Button>
         </>
@@ -398,10 +439,17 @@ function AddDocument({ production, onClose, onAdd }: { production: boolean; onCl
           spellCheck={false}
           className="h-[240px] resize-y border border-line bg-panel p-s2 font-mono text-[12.5px] leading-[19px] focus:border-accent focus:outline-none"
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            setError(null);
+          }}
           onKeyDown={(e) => e.key === "Enter" && !e.metaKey && !e.ctrlKey && e.stopPropagation()}
         />
-        <p className="text-[12px] text-text-2">{t("Extended JSON or shell syntax, such as ObjectId(\"…\") and ISODate(\"…\"). Without an _id the server gives one.")}</p>
+        {error ? (
+          <p role="alert" className="selectable font-mono text-[12px] break-words text-danger">{error}</p>
+        ) : (
+          <p className="text-[12px] text-text-2">{t("Extended JSON or shell syntax, such as ObjectId(\"…\") and ISODate(\"…\"). Without an _id the server gives one.")}</p>
+        )}
       </div>
     </Dialog>
   );
