@@ -1,6 +1,6 @@
 // C03–C08: the connection form, for a new connection and for editing one.
 import { open as openFile } from "@tauri-apps/plugin-dialog";
-import { Check, CheckSquare, Clock, Eye, EyeOff, Lock, TriangleAlert } from "lucide-react";
+import { Check, CheckSquare, Clock, Eye, EyeOff, Lock, Plus, TriangleAlert, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   api,
@@ -16,7 +16,7 @@ import {
 import { typeOf } from "../../lib/types";
 import { connect, findConn, openDialog, saveConnection, useApp, type Conn, type Environment } from "../../store";
 import { Button, Checkbox, Dialog, Field, linkButton, Radio, Segmented, Strip, Switch, TextInput, TypeBadge } from "../dialog";
-import { colourVar, NOT_BUILT } from "../ui";
+import { colourVar } from "../ui";
 import { UnknownHostDialog } from "./HostKeyDialogs";
 import { msg, t, tx } from "../../i18n";
 
@@ -47,6 +47,43 @@ export interface Draft {
     rememberHost: boolean;
   };
   tls: { mode: TlsMode; caFile: string };
+  /** Driver options from the Advanced tab, in the order they were entered. */
+  params: { key: string; value: string }[];
+}
+
+/** What the General tab asks for, which differs per engine. */
+interface Fields {
+  /** The database field, or null when the engine has none. */
+  database: { label: string; placeholder?: string; helper?: string } | null;
+  user: boolean;
+  secret: string;
+  /** Option names the driver reads from the Advanced tab. */
+  options: string[];
+}
+
+function fieldsFor(driverId: string): Fields {
+  const standard: Fields = { database: { label: msg("Database") }, user: true, secret: msg("Password"), options: [] };
+  switch (driverId) {
+    case "redis":
+      return { ...standard, database: { label: msg("Database number"), placeholder: "0", helper: msg("Redis databases are numbered, from 0.") } };
+    case "qdrant":
+      return { database: null, user: false, secret: msg("API key"), options: [] };
+    case "mongodb":
+      return {
+        ...standard,
+        database: { label: msg("Database"), helper: msg("The user is looked up in this database, or in admin when it is empty. authSource under Advanced overrides it.") },
+        options: ["authSource", "replicaSet", "directConnection"],
+      };
+    case "neo4j":
+      return { ...standard, database: { label: msg("Database"), placeholder: "neo4j" } };
+    case "clickhouse":
+      return { ...standard, database: { label: msg("Database"), placeholder: "default" } };
+    case "sqlite":
+    case "duckdb":
+      return { ...standard, options: ["create"] };
+    default:
+      return standard;
+  }
 }
 
 const emptyDraft = (colour: Conn["colour"]): Draft => ({
@@ -63,6 +100,7 @@ const emptyDraft = (colour: Conn["colour"]): Draft => ({
   filePath: "",
   ssh: { enabled: false, host: "", port: "", user: "", auth: "password", password: "", keyPath: "", passphrase: "", keepSecret: true, rememberHost: false },
   tls: { mode: "off", caFile: "" },
+  params: [],
 });
 
 function draftOf(conn: Conn): Draft {
@@ -93,18 +131,28 @@ function draftOf(conn: Conn): Draft {
       rememberHost: false,
     },
     tls: { mode: config.tls?.mode ?? "off", caFile: config.tls?.ca_file ?? "" },
+    params: Object.entries(config.params ?? {}).map(([key, value]) => ({ key, value })),
   };
 }
 
+/** Rows without a name are left out; a name entered twice keeps its last value. */
+function paramsOf(d: Draft): Record<string, string> | undefined {
+  const rows = d.params.filter((row) => row.key.trim());
+  return rows.length ? Object.fromEntries(rows.map((row) => [row.key.trim(), row.value])) : undefined;
+}
+
 function configOf(driverId: string, fileBased: boolean, d: Draft, forTest: boolean, defaultPort?: number): ConnectionConfig {
-  if (fileBased) return { driver: driverId, database: d.filePath.trim() };
+  const params = paramsOf(d);
+  if (fileBased) return { driver: driverId, database: d.filePath.trim(), params };
+  const fields = fieldsFor(driverId);
   return {
     driver: driverId,
     host: d.host.trim(),
     port: d.port ? Number(d.port) : defaultPort,
-    user: d.user.trim() || undefined,
+    user: (fields.user && d.user.trim()) || undefined,
     password: d.password || undefined,
-    database: d.database.trim() || undefined,
+    database: (fields.database && d.database.trim()) || undefined,
+    params,
     tls: { mode: d.tls.mode, ca_file: d.tls.mode === "verify" && d.tls.caFile ? d.tls.caFile : undefined },
     ssh: d.ssh.enabled
       ? {
@@ -205,6 +253,7 @@ export function ConnectionForm({ driverId, engine, editId, initial }: { driverId
   // CockroachDB listens on its own port although it uses the PostgreSQL driver.
   const defaultPort = type.port ?? driver.default_port ?? undefined;
   const fileBased = driver.capabilities.file_based;
+  const fields = fieldsFor(driver.id);
   const production = draft.environment === "production";
 
   // Any edit clears the previous test result.
@@ -216,6 +265,8 @@ export function ConnectionForm({ driverId, engine, editId, initial }: { driverId
     setTest({ state: "idle" });
   };
   const updateSsh = (patch: Partial<Draft["ssh"]>) => update({ ssh: { ...draft.ssh, ...patch } });
+  const updateParam = (index: number, patch: Partial<Draft["params"][number]>) =>
+    update({ params: draft.params.map((row, i) => (i === index ? { ...row, ...patch } : row)) });
   const text = (key: "name" | "host" | "port" | "database" | "user" | "filePath") => ({
     value: draft[key],
     onChange: (e: React.ChangeEvent<HTMLInputElement>) => update({ [key]: e.target.value }),
@@ -330,7 +381,7 @@ export function ConnectionForm({ driverId, engine, editId, initial }: { driverId
     ) : null;
 
   const disabledTab = (name: (typeof TABS)[number]) =>
-    name === "Advanced" ? `${t("Driver options")} · ${t(NOT_BUILT)}` : fileBased && name !== "General" ? t("Not used by {type}", { type: type.name }) : null;
+    fileBased && (name === "SSH tunnel" || name === "TLS") ? t("Not used by {type}", { type: type.name }) : null;
 
   return (
     <>
@@ -470,15 +521,20 @@ export function ConnectionForm({ driverId, engine, editId, initial }: { driverId
                       <TextInput mono inputMode="numeric" placeholder={String(defaultPort ?? "")} {...text("port")} />
                     </Field>
                   </div>
-                  <Field label={t("Database")}>
-                    <TextInput mono {...text("database")} />
-                  </Field>
-                  <Field label={t("User")}>
-                    <TextInput mono {...text("user")} />
-                  </Field>
+                  {/* Fields an engine does not use are left out, and the grid closes up. */}
+                  {fields.database && (
+                    <Field label={t(fields.database.label)} helper={fields.database.helper && t(fields.database.helper)}>
+                      <TextInput mono inputMode={driver.id === "redis" ? "numeric" : undefined} placeholder={fields.database.placeholder} {...text("database")} />
+                    </Field>
+                  )}
+                  {fields.user && (
+                    <Field label={t("User")}>
+                      <TextInput mono {...text("user")} />
+                    </Field>
+                  )}
                   <div className="flex flex-col gap-s2">
-                    <Field label={t("Password")}>
-                      <SecretInput label={t("Password")} value={draft.password} onChange={(password) => update({ password })} unchanged={!!editing?.requires.password} />
+                    <Field label={t(fields.secret)}>
+                      <SecretInput label={t(fields.secret)} value={draft.password} onChange={(password) => update({ password })} unchanged={!!editing?.requires.password} />
                     </Field>
                     <Checkbox checked={draft.keepPassword} onChange={(keepPassword) => update({ keepPassword })}>
                       {t("Save in system keychain")}
@@ -582,6 +638,47 @@ export function ConnectionForm({ driverId, engine, editId, initial }: { driverId
                   </div>
                 </Field>
               </fieldset>
+            </div>
+          )}
+
+          {tab === "Advanced" && (
+            <div className="flex flex-col gap-s3">
+              <p className="text-text-2">{t("Driver options are passed to the {type} driver exactly as written.", { type: type.name })}</p>
+              {/* Not drawn in the design: the line naming the options this driver reads. */}
+              <p className="text-[12px] text-text-3">
+                {fields.options.length
+                  ? tx("Options this driver reads: {names}", { names: <span key="names" className="font-mono">{fields.options.join(", ")}</span> })
+                  : t("This driver reads no options yet.")}
+              </p>
+              {draft.params.length > 0 && (
+                <div role="table" aria-label={t("Driver options")} className="flex flex-col gap-s2">
+                  <div role="row" className="flex gap-s2 font-heading text-[11px] font-semibold tracking-[.08em] text-text-2 uppercase">
+                    <span role="columnheader" className="w-[260px]">{t("Option")}</span>
+                    <span role="columnheader" className="flex-1">{t("Value")}</span>
+                    <span className="w-[28px]" />
+                  </div>
+                  {draft.params.map((row, i) => (
+                    <div role="row" key={i} className="flex items-center gap-s2">
+                      {/* A row added with the button takes the focus, so typing goes into it. */}
+                      <TextInput mono autoFocus={i === draft.params.length - 1 && row.key === "" && row.value === ""} className="w-[260px]" aria-label={t("Option")} value={row.key} onChange={(e) => updateParam(i, { key: e.target.value })} />
+                      <TextInput mono className="flex-1" aria-label={t("Value")} value={row.value} onChange={(e) => updateParam(i, { value: e.target.value })} />
+                      <button
+                        type="button"
+                        title={t("Remove option")}
+                        aria-label={t("Remove option")}
+                        className="grid size-[28px] place-items-center text-text-2 hover:bg-hover hover:text-text"
+                        onClick={() => update({ params: draft.params.filter((_, j) => j !== i) })}
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <Button variant="ghost" className="self-start text-accent-text" onClick={() => update({ params: [...draft.params, { key: "", value: "" }] })}>
+                <Plus size={14} />
+                {t("Add option")}
+              </Button>
             </div>
           )}
         </div>
