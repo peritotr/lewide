@@ -34,7 +34,7 @@ export const TYPE_GROUPS: { model: string; types: DatabaseType[] }[] = [
   { model: msg("Analytic"), types: [{ code: "Ch", name: "ClickHouse", driver: "clickhouse" }, { code: "Dk", name: "DuckDB", driver: "duckdb" }, { code: "Sf", name: "Snowflake" }, { code: "Bq", name: "BigQuery" }] },
   { model: msg("Document"), types: [{ code: "Mg", name: "MongoDB", driver: "mongodb" }, { code: "Cb", name: "Couchbase" }] },
   { model: msg("Key-value"), types: [{ code: "Rd", name: "Redis", driver: "redis" }, { code: "Vk", name: "Valkey", driver: "redis" }] },
-  { model: msg("Vector"), types: [{ code: "Qd", name: "Qdrant", driver: "qdrant" }, { code: "Pv", name: "pgvector" }, { code: "Mv", name: "Milvus" }] },
+  { model: msg("Vector"), types: [{ code: "Qd", name: "Qdrant", driver: "qdrant" }, { code: "Pv", name: "pgvector", driver: "pgvector" }, { code: "Mv", name: "Milvus" }] },
   { model: msg("Graph"), types: [{ code: "N4", name: "Neo4j", driver: "neo4j" }] },
   { model: msg("Time series"), types: [{ code: "Ts", name: "TimescaleDB" }, { code: "If", name: "InfluxDB" }] },
   { model: msg("Search"), types: [{ code: "Es", name: "Elasticsearch" }, { code: "Os", name: "OpenSearch" }] },

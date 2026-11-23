@@ -67,6 +67,7 @@ impl AppState {
         registry.register(dbclient_driver_mysql::MysqlDriver);
         registry.register(dbclient_driver_redis::RedisDriver);
         registry.register(dbclient_driver_qdrant::QdrantDriver);
+        registry.register(dbclient_driver_pgvector::PgvectorDriver);
         registry.register(dbclient_driver_neo4j::Neo4jDriver);
         registry.register(dbclient_driver_mongodb::MongoDriver);
         registry.register(dbclient_driver_sqlserver::SqlServerDriver);
@@ -1640,6 +1641,7 @@ mod ipc_tests {
             "mongodb",
             "mysql",
             "neo4j",
+            "pgvector",
             "postgres",
             "qdrant",
             "redis",

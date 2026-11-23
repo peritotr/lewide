@@ -56,6 +56,7 @@ scripts/test-servers.sh compat                               # MariaDB and Cockr
 eval "$(scripts/test-redis.sh up)"; eval "$(scripts/test-redis.sh tls)"
 eval "$(scripts/test-mongodb.sh up)"
 eval "$(scripts/test-qdrant.sh up)"; eval "$(scripts/test-qdrant.sh tls)"
+eval "$(scripts/test-pgvector.sh up)"
 eval "$(scripts/test-neo4j.sh up)"
 eval "$(scripts/test-clickhouse.sh up)"
 eval "$(scripts/test-sqlserver.sh up)"                       # accepts Microsoft's licence for the container

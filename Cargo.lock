@@ -1404,6 +1404,7 @@ dependencies = [
  "dbclient-driver-mongodb",
  "dbclient-driver-mysql",
  "dbclient-driver-neo4j",
+ "dbclient-driver-pgvector",
  "dbclient-driver-postgres",
  "dbclient-driver-qdrant",
  "dbclient-driver-redis",
@@ -1512,6 +1513,18 @@ dependencies = [
  "serde_json",
  "tokio",
  "webpki-roots",
+]
+
+[[package]]
+name = "dbclient-driver-pgvector"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "dbclient-core",
+ "dbclient-driver-postgres",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
 ]
 
 [[package]]

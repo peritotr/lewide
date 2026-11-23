@@ -447,7 +447,8 @@ function ConditionForm({ fields, onAdd, onCancel }: { fields: string[]; onAdd(co
       }}
     >
       <div className="flex gap-s2">
-        <TextInput mono autoFocus className="flex-1" list="payload-fields" placeholder={t("field")} aria-label={t("Field")} value={field} onChange={(e) => setField(e.target.value)} />
+        {/* The first known field is filled in and selected, so typing another name replaces it. */}
+        <TextInput mono autoFocus className="flex-1" list="payload-fields" placeholder={t("field")} aria-label={t("Field")} value={field} onFocus={(e) => e.currentTarget.select()} onChange={(e) => setField(e.target.value)} />
         <datalist id="payload-fields">
           {fields.map((name) => (
             <option key={name} value={name} />

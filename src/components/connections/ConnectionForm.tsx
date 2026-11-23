@@ -78,6 +78,8 @@ function fieldsFor(driverId: string): Fields {
       return { ...standard, database: { label: msg("Database"), placeholder: "neo4j" } };
     case "clickhouse":
       return { ...standard, database: { label: msg("Database"), placeholder: "default" } };
+    case "pgvector":
+      return { ...standard, options: ["metric"] };
     case "sqlite":
     case "duckdb":
       return { ...standard, options: ["create"] };

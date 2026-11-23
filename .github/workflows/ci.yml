@@ -89,6 +89,8 @@ jobs:
             up: scripts/test-redis.sh up && scripts/test-redis.sh tls
           - engine: mongodb
             up: scripts/test-mongodb.sh up
+          - engine: pgvector
+            up: scripts/test-pgvector.sh up
           - engine: qdrant
             up: scripts/test-qdrant.sh up && scripts/test-qdrant.sh tls
           - engine: neo4j

@@ -13,6 +13,8 @@ const store = { ...caps, sql: false, schemas: false, transactions: false, cancel
 const redis: DriverInfo = { id: "redis", name: "Redis", model: "key_value", capabilities: { ...store, sql: true }, default_port: 6379, desktop_only: false };
 const mongodb: DriverInfo = { id: "mongodb", name: "MongoDB", model: "document", capabilities: store, default_port: 27017, desktop_only: false };
 const qdrant: DriverInfo = { id: "qdrant", name: "Qdrant", model: "vector", capabilities: { ...store, vector_search: true }, default_port: 6333, desktop_only: false };
+// PostgreSQL underneath, so it keeps SQL and transactions; the demo answers its vector calls like Qdrant's.
+const pgvector: DriverInfo = { id: "pgvector", name: "pgvector", model: "vector", capabilities: { ...caps, vector_search: true }, default_port: 5432, desktop_only: false };
 const neo4j: DriverInfo = { id: "neo4j", name: "Neo4j", model: "graph", capabilities: store, default_port: 7474, desktop_only: false };
 
 /**
@@ -104,7 +106,7 @@ function statuses(): QueryResult {
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const demoBackend: Backend = {
-  listDrivers: async () => [mongodb, mysql, neo4j, postgres, qdrant, redis, sqlite],
+  listDrivers: async () => [mongodb, mysql, neo4j, pgvector, postgres, qdrant, redis, sqlite],
   openConnection: async () => 1,
   closeConnection: async () => {},
   runQuery: async (_session, statement) => {
@@ -397,7 +399,7 @@ export function seedDemo() {
     id,
   });
   replaceState({
-    drivers: [mongodb, mysql, neo4j, postgres, qdrant, redis, sqlite],
+    drivers: [mongodb, mysql, neo4j, pgvector, postgres, qdrant, redis, sqlite],
     connections: [
       conn("d1", "acme-prod", "production", 1, true),
       conn("d2", "acme-staging", "staging", 2, true),

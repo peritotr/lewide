@@ -1,0 +1,17 @@
+[package]
+name = "dbclient-driver-pgvector"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+async-trait = "0.1.92"
+dbclient-core = { version = "0.1.0", path = "../core" }
+dbclient-driver-postgres = { version = "0.1.0", path = "../driver-postgres" }
+serde_json = "1.0.154"
+
+[dev-dependencies]
+tokio = { version = "1.54.1", features = ["rt", "macros"] }
+tokio-postgres = "0.7.18"

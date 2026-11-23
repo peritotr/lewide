@@ -19,9 +19,10 @@ yet. It changes as work lands.
 | ClickHouse | ✅ Supported | Read-only grid and structure by design: its keys do not identify one row |
 | Redis, Valkey | ✅ Supported | Key browser and editors for every core type, TLS |
 | MongoDB | ✅ Supported | Documents as tree, table or JSON; in-place edits |
+| pgvector | ✅ Supported | Tables with a vector column searched like a vector database; SQL as usual |
 | Qdrant | ✅ Supported | Vector search with payload filters; search by text needs an embedding provider |
 | Neo4j | ✅ Supported | Graph canvas, table and text views; Cypher highlighting still to come |
-| DuckDB | ✅ Ready | Embedded, built into the app; editing and column changes |
+| DuckDB | ✅ Supported | Embedded, built into the app; editing and column changes |
 
 Across all of them: saved connections with passwords in the system
 credential store, SSH tunnels, TLS, Production safeguards (a confirmation
@@ -31,7 +32,6 @@ before every write), English and Turkish, light and dark themes.
 
 **Connection types** (order agreed one at a time):
 
-- pgvector — vector search on PostgreSQL, reusing the vector view
 - TiDB, YugabyteDB, TimescaleDB — they speak the MySQL or PostgreSQL protocol, so mostly testing
 - Elasticsearch and OpenSearch — needs a search view that is not designed yet
 - Oracle, Snowflake, BigQuery, InfluxDB, Couchbase, Milvus
