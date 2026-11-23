@@ -53,7 +53,7 @@ the variables; `down` removes it again.
 ```bash
 scripts/test-servers.sh up && . target/test-servers/env.sh   # PostgreSQL, MySQL (both with TLS), SSH
 scripts/test-servers.sh compat                               # MariaDB and CockroachDB as well
-eval "$(scripts/test-redis.sh up)"
+eval "$(scripts/test-redis.sh up)"; eval "$(scripts/test-redis.sh tls)"
 eval "$(scripts/test-mongodb.sh up)"
 eval "$(scripts/test-qdrant.sh up)"; eval "$(scripts/test-qdrant.sh tls)"
 eval "$(scripts/test-neo4j.sh up)"

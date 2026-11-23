@@ -17,7 +17,7 @@ yet. It changes as work lands.
 | SQLite | ✅ Supported | Local files |
 | SQL Server | ✅ Supported | Changing columns and query plans are not built yet |
 | ClickHouse | ✅ Supported | Read-only grid and structure by design: its keys do not identify one row |
-| Redis, Valkey | ✅ Supported | Key browser and editors for every core type; no TLS yet |
+| Redis, Valkey | ✅ Supported | Key browser and editors for every core type, TLS |
 | MongoDB | ✅ Supported | Documents as tree, table or JSON; in-place edits |
 | Qdrant | ✅ Supported | Vector search with payload filters; search by text needs an embedding provider |
 | Neo4j | ✅ Supported | Graph canvas, table and text views; Cypher highlighting still to come |
@@ -38,10 +38,8 @@ before every write), English and Turkish, light and dark themes.
 
 **Finishing what exists**
 
-- A connection form per engine (Redis database number, Qdrant API key, MongoDB authentication database, Neo4j database)
 - Changing columns on SQL Server and ClickHouse; editing indexes, foreign keys and triggers everywhere
 - Query plans for SQL Server; Cypher highlighting, Explain and Save for Neo4j
-- Redis over TLS
 - Text search for vector databases through an embedding provider
 - Excel import and export
 - Structured AI findings (review results shown in place, not only as text)
@@ -50,7 +48,6 @@ before every write), English and Turkish, light and dark themes.
 
 - Signed and notarized installers for macOS, Windows and Linux
 - Automatic updates
-- Continuous integration for every supported engine
 
 ## Later
 

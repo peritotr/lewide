@@ -4,6 +4,7 @@
 //! commands as text, the way redis-cli does.
 
 mod resp;
+mod tls;
 
 use std::time::Instant;
 
@@ -14,12 +15,16 @@ use dbclient_core::kv::{
 use dbclient_core::{
     ApplyResult, Capabilities, ChangeSet, Column, Connection, ConnectionConfig, DataModel,
     DbObject, Driver, DriverInfo, Error, Namespace, ObjectDescription, QueryRequest, QueryResult,
-    Result, SqlDialect, Value,
+    Result, SqlDialect, TlsMode, Value,
 };
 use resp::Reply;
-use tokio::io::{AsyncWriteExt, BufStream};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufStream};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
+
+/// A plain or a TLS socket; the protocol code reads and writes either the same way.
+trait Socket: AsyncRead + AsyncWrite + Send + Unpin {}
+impl<T: AsyncRead + AsyncWrite + Send + Unpin> Socket for T {}
 
 /// Hash fields and set members read in one step.
 const DEFAULT_PAGE: u32 = 200;
@@ -69,8 +74,25 @@ impl Driver for RedisDriver {
         .map_err(|e| Error::Connect(format!("{host}:{port}: {e}")))?;
         let _ = stream.set_nodelay(true);
 
+        let socket: Box<dyn Socket> = if config.tls.mode == TlsMode::Off {
+            Box::new(stream)
+        } else {
+            // Through a route the certificate is still checked against the real host.
+            let name = rustls::pki_types::ServerName::try_from(host.to_owned())
+                .map_err(|e| Error::InvalidConfig(format!("host {host:?}: {e}")))?;
+            let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(
+                tls::client_config(&config.tls)?,
+            ));
+            Box::new(
+                connector
+                    .connect(name, stream)
+                    .await
+                    .map_err(|e| Error::Connect(format!("TLS with {host}:{port}: {e}")))?,
+            )
+        };
+
         let connection = RedisConnection {
-            stream: Mutex::new(BufStream::new(stream)),
+            stream: Mutex::new(BufStream::new(socket)),
             db,
         };
         if let Some(password) = config.password.as_deref().filter(|p| !p.is_empty()) {
@@ -107,7 +129,7 @@ fn connect_err(error: Error) -> Error {
 
 struct RedisConnection {
     /// One connection, one command sequence at a time.
-    stream: Mutex<BufStream<TcpStream>>,
+    stream: Mutex<BufStream<Box<dyn Socket>>>,
     /// The database the connection settings name.
     db: u32,
 }

@@ -2,12 +2,17 @@
 //! is set, for example `redis://:test@127.0.0.1:6379/0` (see scripts/test-redis.sh).
 
 use dbclient_core::kv::{KeyCommand, KeyData, ReadRange};
-use dbclient_core::{Connection, ConnectionConfig, Driver, Error, QueryRequest, Value};
+use dbclient_core::{
+    Connection, ConnectionConfig, Driver, Error, QueryRequest, TlsConfig, TlsMode, Value,
+};
 use dbclient_driver_redis::RedisDriver;
 
 /// `redis://[user]:password@host:port/db`
 fn test_config() -> Option<ConnectionConfig> {
-    let url = std::env::var("DBCLIENT_TEST_REDIS_URL").ok()?;
+    Some(config_for(&std::env::var("DBCLIENT_TEST_REDIS_URL").ok()?))
+}
+
+fn config_for(url: &str) -> ConnectionConfig {
     let rest = url
         .strip_prefix("redis://")
         .expect("the test URL starts with redis://");
@@ -17,7 +22,7 @@ fn test_config() -> Option<ConnectionConfig> {
     let (host, port) = host_port
         .rsplit_once(':')
         .expect("the test URL needs a port");
-    Some(ConnectionConfig {
+    ConnectionConfig {
         driver: "redis".into(),
         host: Some(host.into()),
         port: Some(port.parse().unwrap()),
@@ -25,7 +30,7 @@ fn test_config() -> Option<ConnectionConfig> {
         password: Some(password.to_owned()).filter(|p| !p.is_empty()),
         database: Some(db.into()),
         ..ConnectionConfig::default()
-    })
+    }
 }
 
 macro_rules! connect_or_skip {
@@ -766,4 +771,96 @@ async fn writes_each_kind_of_change() {
             .unwrap();
     }
     assert_eq!(kv.keyspace(db).await.unwrap().keys, 0);
+}
+
+// ---- TLS: a second server, started by `scripts/test-redis.sh tls` ----
+
+/// `DBCLIENT_TEST_REDIS_TLS_URL` and the CA file that signed its certificate.
+/// The certificate names `localhost`, `127.0.0.1` and `192.0.2.10`.
+fn tls_server() -> Option<(ConnectionConfig, String)> {
+    let url = std::env::var("DBCLIENT_TEST_REDIS_TLS_URL").ok()?;
+    let ca = std::env::var("DBCLIENT_TEST_REDIS_TLS_CA").ok()?;
+    Some((config_for(&url), ca))
+}
+
+fn with_tls(base: &ConnectionConfig, mode: TlsMode, ca_file: Option<&str>) -> ConnectionConfig {
+    ConnectionConfig {
+        tls: TlsConfig {
+            mode,
+            ca_file: ca_file.map(str::to_owned),
+        },
+        ..base.clone()
+    }
+}
+
+#[tokio::test]
+async fn tls_modes() {
+    let Some((base, ca)) = tls_server() else {
+        eprintln!("skipped: DBCLIENT_TEST_REDIS_TLS_URL is not set");
+        return;
+    };
+
+    // The test CA is not a public one: without the file the server is not trusted.
+    let Err(error) = RedisDriver
+        .connect(&with_tls(&base, TlsMode::Verify, None))
+        .await
+    else {
+        panic!("trusted an unknown CA");
+    };
+    assert!(matches!(error, Error::Connect(_)), "{error:?}");
+
+    let conn = RedisDriver
+        .connect(&with_tls(&base, TlsMode::Verify, Some(&ca)))
+        .await
+        .unwrap();
+    assert_eq!(run(conn.as_ref(), "PING").await, text("PONG"));
+
+    let conn = RedisDriver
+        .connect(&with_tls(&base, TlsMode::Insecure, None))
+        .await
+        .unwrap();
+    assert_eq!(run(conn.as_ref(), "PING").await, text("PONG"));
+
+    // The server speaks TLS only.
+    assert!(
+        RedisDriver
+            .connect(&with_tls(&base, TlsMode::Off, None))
+            .await
+            .is_err()
+    );
+
+    let missing = with_tls(&base, TlsMode::Verify, Some("/nonexistent/ca.pem"));
+    assert!(matches!(
+        RedisDriver.connect(&missing).await,
+        Err(Error::InvalidConfig(_))
+    ));
+}
+
+#[tokio::test]
+async fn tls_through_a_route_checks_the_real_host() {
+    let Some((base, ca)) = tls_server() else {
+        eprintln!("skipped: DBCLIENT_TEST_REDIS_TLS_URL is not set");
+        return;
+    };
+    let route = format!("{}:{}", base.host.as_deref().unwrap(), base.port.unwrap());
+    let through_route = |host: &str| ConnectionConfig {
+        host: Some(host.into()),
+        port: Some(6379),
+        route: Some(route.parse().expect("the test URL needs an IP address")),
+        ..with_tls(&base, TlsMode::Verify, Some(&ca))
+    };
+
+    // A name and an address the certificate is valid for, reached at the route.
+    for host in ["localhost", "192.0.2.10"] {
+        let conn = RedisDriver.connect(&through_route(host)).await.unwrap();
+        assert_eq!(run(conn.as_ref(), "PING").await, text("PONG"));
+    }
+    // The certificate is not valid for these, although the route's own
+    // address (127.0.0.1) is in it.
+    for host in ["redis.invalid", "192.0.2.11"] {
+        let Err(error) = RedisDriver.connect(&through_route(host)).await else {
+            panic!("accepted a certificate that does not name {host}");
+        };
+        assert!(matches!(error, Error::Connect(_)), "{host}: {error:?}");
+    }
 }

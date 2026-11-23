@@ -68,7 +68,7 @@ Live driver tests are skipped (and pass) unless their environment variable is se
 | Script | Loads |
 |---|---|
 | `scripts/test-servers.sh up` then `. target/test-servers/env.sh` (`compat` adds MariaDB and CockroachDB) | PostgreSQL, MySQL, SSH |
-| `eval "$(scripts/test-redis.sh up)"` | `DBCLIENT_TEST_REDIS_URL` |
+| `eval "$(scripts/test-redis.sh up)"`, `… tls` | `DBCLIENT_TEST_REDIS_URL`, `…_TLS_URL`, `…_TLS_CA` |
 | `eval "$(scripts/test-mongodb.sh up)"` | `DBCLIENT_TEST_MONGODB_URL`, `…_CA` |
 | `eval "$(scripts/test-qdrant.sh up)"`, `… tls` | `DBCLIENT_TEST_QDRANT_URL`, `…_API_KEY`, `…_TLS_URL`, `…_TLS_CA` |
 | `eval "$(scripts/test-neo4j.sh up)"` | `DBCLIENT_TEST_NEO4J_URL` |
@@ -120,7 +120,7 @@ Always run `… down` afterwards. CI (`.github/workflows/ci.yml`) runs the check
 | DuckDB (Dk) | driver-duckdb | done | done: the relational views, editing and column changes | DuckDB 2.0.1 (bundled): open a file, tree, multi-statement run with Parser Error and line/column, messages with row counts, paging, cell edit applied in one transaction, WHERE filter, exact count, structure and DDL, renaming a column, cancel; import and SQL/CSV export through the bridge's commands; EXPLAIN |
 | ClickHouse (Ch) | driver-clickhouse | done (no TLS test, no ALTER) | done: grid and structure read-only | ClickHouse 25.8: connect, tree with row estimates, multi-statement run with error code and position, cancel, table in sorting-key order, WHERE filter, exact count, structure, import and SQL/CSV export through the bridge's commands |
 | SQL Server (Ms) | driver-sqlserver | done (no ALTER, no cancel) | done: structure is read-only | SQL Server 2022: connect, tree, multi-statement run with error code and line, paging, cell edit and apply, WHERE filter, exact count, structure, Explain message, Format; import and SQL/CSV export through the bridge's commands |
-| Redis (Rd), Valkey (Vk) | driver-redis | done, no TLS | done: `KeyValueView.tsx` (K01–K05) | connect, scan by pattern, read every type, hash field edit |
+| Redis (Rd), Valkey (Vk) | driver-redis | done, with TLS | done: `KeyValueView.tsx` (K01–K05) | connect, scan by pattern, read every type, hash field edit |
 | Qdrant (Qd) | driver-qdrant | done (read-only by design) | done: `VectorView.tsx` (V01–V02) | connect, search by vector, point panel |
 | MongoDB (Mg) | driver-mongodb | done | done: `DocumentView.tsx` (D01–D03) | connect, tree, filter, invalid-filter line, in-place edit |
 | Neo4j (N4) | driver-neo4j | done | done: `GraphView.tsx` (R01–R02), sidebar labels and relationship types | multi-statement run, canvas, selection and side panel, drag, pan, zoom, Fit, expand, hide/show, Table and Text views, syntax error with caret, write counters, sidebar labels/types |
@@ -141,21 +141,19 @@ Known limits and untried paths:
 See [ROADMAP.md](ROADMAP.md) for the public list. In more detail:
 
 1. **Click through the untested paths** above for MongoDB, Redis and Qdrant on real servers.
-2. **Connection form per engine:** it still shows the relational fields for every type. Needed: Redis database number and TLS, Qdrant API key, MongoDB authentication database and replica set, Neo4j database (`src/components/connections/ConnectionForm.tsx`, "Driver options" tab).
-3. **Next connectors**, suggested order: pgvector (driver-postgres plus `VectorStore`, reusing `VectorView`), then Elasticsearch / OpenSearch (needs a search view that is not designed yet). For each: crate with `Driver` + `Connection` (+ model trait), `tests/live.rs`, `scripts/test-<name>.sh up|down`, registration in `src-tauri`, `driver:` in `src/lib/types.ts`, demo data, view, translations, bridge check, CI `engines` entry.
-4. **Cypher in the shared editor** (needs approval: makes `src/components/Editor.tsx` language-neutral), then `Explain`, `Format` and `Save` for graph tabs.
-5. **SQL Server follow-ups** (each needs approval): column editing in T-SQL, query plans, named instances.
-6. **Housekeeping:** the four copies of the rustls setup (postgres, qdrant, neo4j, clickhouse) could move into one shared helper.
-7. **Release:** installers for the three systems through CI, code signing.
+2. **Next connectors**, suggested order: pgvector (driver-postgres plus `VectorStore`, reusing `VectorView`), then Elasticsearch / OpenSearch (needs a search view that is not designed yet). For each: crate with `Driver` + `Connection` (+ model trait), `tests/live.rs`, `scripts/test-<name>.sh up|down`, registration in `src-tauri`, `driver:` in `src/lib/types.ts`, demo data, view, translations, bridge check, CI `engines` entry.
+3. **Cypher in the shared editor** (needs approval: makes `src/components/Editor.tsx` language-neutral), then `Explain`, `Format` and `Save` for graph tabs.
+4. **SQL Server follow-ups** (each needs approval): column editing in T-SQL, query plans, named instances.
+5. **Housekeeping:** the four copies of the rustls setup (postgres, qdrant, neo4j, clickhouse) could move into one shared helper.
+6. **Release:** installers for the three systems through CI, code signing.
 
 ## 6. Known problems
 
-- **MongoDB authentication database:** the driver uses `params["authSource"]`, else the connection's database, else `admin`. A root user with a database filled in fails to log in, and the form cannot set `authSource`.
+- **MongoDB authentication database:** the driver uses `params["authSource"]`, else the connection's database, else `admin`. A root user with a database filled in needs `authSource = admin` in the form's Advanced tab.
 - **MongoDB with a CA file trusts only that file**, not the public roots as well, which differs from the comment on `TlsConfig.ca_file`.
 - **MongoDB `route`** (used by the SSH tunnel) runs a small in-process SOCKS5 listener on loopback; `mongodb+srv://` and several hosts are not supported.
 - **Neo4j:** TLS never tested against a TLS server; no transactions and no cancel; `max_rows` truncates after the download.
 - **Qdrant:** `ping` uses `/healthz`, which needs no key, so a revoked key shows only on the next real call.
-- **Redis:** no TLS.
 - **JSON import order:** columns come in file order, not alphabetical (a result of `preserve_order`).
 - **The status bar and toolbar still speak SQL** ("auto-commit", "open transaction") on non-relational tabs.
 - Other gaps: index, foreign key and trigger editing; AI structured findings (AI05/AI14); Excel import/export; embeddings for vector text search; no splash screen.

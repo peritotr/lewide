@@ -84,7 +84,7 @@ jobs:
       matrix:
         include:
           - engine: redis
-            up: scripts/test-redis.sh up
+            up: scripts/test-redis.sh up && scripts/test-redis.sh tls
           - engine: mongodb
             up: scripts/test-mongodb.sh up
           - engine: qdrant
