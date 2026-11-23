@@ -91,7 +91,8 @@ export function StatusBar() {
           {t("Transaction open")} · {tn(conn.tx.statements, "{count} statement", "{count} statements")} · <span className={mono}>{age(conn.tx.openedAt)}</span>
         </span>
       ) : (
-        connected && <span>{conn.txMode === "manual" ? t("Manual · no open transaction") : t("Auto-commit · no open transaction")}</span>
+        // Engines without transactions (key-value, document, vector, graph, ClickHouse) have no mode to show.
+        connected && conn.driver.capabilities.transactions && <span>{conn.txMode === "manual" ? t("Manual · no open transaction") : t("Auto-commit · no open transaction")}</span>
       )}
       {tab?.kind === "query" && <span className={mono}>{t("Ln {line}, Col {column}", { line: tab.caret.line, column: tab.caret.col })}</span>}
       <span>UTF-8</span>

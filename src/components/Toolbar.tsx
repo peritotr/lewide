@@ -192,9 +192,12 @@ export function Toolbar({ tab, conn, onRun, onRunSelection, onExplain, onFormat 
       <Select label={t("Row limit")} disabled={!connected} onOpen={(anchor) => setOpen({ menu: "limit", anchor })}>
         {t("Limit")}<span className="font-mono">{tab.limit}</span>
       </Select>
-      <Select label={t("Transaction mode")} disabled={!connected || !conn?.driver.capabilities.transactions} onOpen={(anchor) => setOpen({ menu: "mode", anchor })}>
-        {conn?.txMode === "manual" ? t("Manual") : t("Auto-commit")}
-      </Select>
+      {/* Hidden, not disabled, for engines without transactions: there is no mode to choose. */}
+      {(!conn || conn.driver.capabilities.transactions) && (
+        <Select label={t("Transaction mode")} disabled={!connected} onOpen={(anchor) => setOpen({ menu: "mode", anchor })}>
+          {conn?.txMode === "manual" ? t("Manual") : t("Auto-commit")}
+        </Select>
+      )}
 
       {open?.menu === "limit" && (
         <Floating anchor={open.anchor} width={200} alignRight onClose={close} label={t("Row limit")}>

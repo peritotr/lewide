@@ -155,5 +155,4 @@ See [ROADMAP.md](ROADMAP.md) for the public list. In more detail:
 - **Neo4j:** TLS never tested against a TLS server; no transactions and no cancel; `max_rows` truncates after the download.
 - **Qdrant:** `ping` uses `/healthz`, which needs no key, so a revoked key shows only on the next real call.
 - **JSON import order:** columns come in file order, not alphabetical (a result of `preserve_order`).
-- **The status bar and toolbar still speak SQL** ("auto-commit", "open transaction") on non-relational tabs.
 - Other gaps: index, foreign key and trigger editing; AI structured findings (AI05/AI14); Excel import/export; embeddings for vector text search; no splash screen.
