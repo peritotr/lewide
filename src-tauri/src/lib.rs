@@ -1345,6 +1345,28 @@ async fn ai_list_models(state: State<'_, AppState>, id: String) -> Result<Vec<Mo
     dbclient_ai::list_models(&state.http, &provider, key.as_deref()).await
 }
 
+/// Turns search text into a vector with a provider's embedding model (the
+/// default provider when `id` is `None`). Only the text is sent.
+#[tauri::command]
+async fn ai_embed(
+    state: State<'_, AppState>,
+    id: Option<String>,
+    model: Option<String>,
+    text: String,
+) -> Result<Vec<f32>, Error> {
+    let (provider, key) = state
+        .with_ai(move |store| store.resolve(id.as_deref()))
+        .await?;
+    dbclient_ai::embed(
+        &state.http,
+        &provider,
+        key.as_deref(),
+        model.as_deref(),
+        &text,
+    )
+    .await
+}
+
 /// Sends a one-line request to check the key, the address and the model.
 #[tauri::command]
 async fn ai_test_provider(state: State<'_, AppState>, id: String) -> Result<Completion, Error> {
@@ -1534,6 +1556,7 @@ macro_rules! handlers {
             ai_delete_provider,
             ai_set_default_provider,
             ai_list_models,
+            ai_embed,
             ai_test_provider,
             ai_preview_context,
             ai_ask,

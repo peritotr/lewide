@@ -88,6 +88,8 @@ const tauriAi = {
   deleteProvider: (id: string) => invoke<void>("ai_delete_provider", { id }),
   setDefaultProvider: (id: string) => invoke<void>("ai_set_default_provider", { id }),
   listModels: (id: string) => invoke<ModelInfo[]>("ai_list_models", { id }),
+  /** Turns search text into a vector; only the text is sent. `model` falls back to the provider's usual embedding model. */
+  embed: (id: string | null, model: string | null, text: string) => invoke<number[]>("ai_embed", { id, model, text }),
   /** Sends a one-line request to check the key, the address and the model. */
   testProvider: (id: string) => invoke<Completion>("ai_test_provider", { id }),
   previewContext: (session: number, namespace?: string, sql?: string) =>
@@ -133,6 +135,7 @@ export const ai: AiBackend = {
   deleteProvider: (id) => backend.deleteProvider(id),
   setDefaultProvider: (id) => backend.setDefaultProvider(id),
   listModels: (id) => backend.listModels(id),
+  embed: (id, model, text) => backend.embed(id, model, text),
   testProvider: (id) => backend.testProvider(id),
   previewContext: (session, namespace, sql) => backend.previewContext(session, namespace, sql),
   ask: (request, onText) => backend.ask(request, onText),

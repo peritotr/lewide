@@ -227,6 +227,98 @@ pub async fn stream_chat(
     Ok(completion)
 }
 
+/// The embedding model used when none is named, per provider. Anthropic has
+/// none; an OpenAI-compatible server (Ollama…) needs its model named.
+pub fn default_embedding_model(kind: ProviderKind) -> Option<&'static str> {
+    match kind {
+        ProviderKind::OpenAi => Some("text-embedding-3-small"),
+        ProviderKind::Gemini => Some("gemini-embedding-001"),
+        ProviderKind::Anthropic | ProviderKind::OpenAiCompatible => None,
+    }
+}
+
+/// Turns `text` into a vector with the provider's embedding model, for search
+/// by text in a vector database. Only the text is sent.
+pub async fn embed(
+    http: &reqwest::Client,
+    provider: &ProviderConfig,
+    api_key: Option<&str>,
+    model: Option<&str>,
+    text: &str,
+) -> Result<Vec<f32>> {
+    if provider.kind == ProviderKind::Anthropic {
+        return Err(ai_error(
+            "not_configured",
+            "Anthropic has no embedding models; choose an OpenAI, Gemini or OpenAI-compatible provider",
+        ));
+    }
+    if text.trim().is_empty() {
+        return Err(ai_error(
+            "not_configured",
+            "there is no text to search with",
+        ));
+    }
+    let base = provider.base()?;
+    let model = model
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .or_else(|| default_embedding_model(provider.kind))
+        .ok_or_else(|| {
+            ai_error(
+                "not_configured",
+                format!("name an embedding model for {}", provider.name),
+            )
+        })?;
+    let key = api_key.filter(|k| !k.is_empty());
+    if key.is_none() && provider.kind != ProviderKind::OpenAiCompatible {
+        return Err(ai_error(
+            "not_configured",
+            format!("{} has no API key", provider.name),
+        ));
+    }
+    let request = match provider.kind {
+        ProviderKind::Gemini => http
+            .post(format!("{base}/models/{model}:embedContent"))
+            .header("x-goog-api-key", key.unwrap_or_default())
+            .json(&json!({ "content": { "parts": [{ "text": text }] } })),
+        _ => {
+            let request = http
+                .post(format!("{base}/embeddings"))
+                .json(&json!({ "model": model, "input": text }));
+            match key {
+                Some(key) => request.bearer_auth(key),
+                None => request,
+            }
+        }
+    };
+    let response = request.send().await.map_err(network_error)?;
+    let status = response.status();
+    let body = response.text().await.map_err(network_error)?;
+    if !status.is_success() {
+        return Err(status_error(status.as_u16(), &body, &provider.name, model));
+    }
+    let json: Value = serde_json::from_str(&body).map_err(|e| {
+        ai_error(
+            "server",
+            format!("unexpected reply from {}: {e}", provider.name),
+        )
+    })?;
+    let values = match provider.kind {
+        ProviderKind::Gemini => &json["embedding"]["values"],
+        _ => &json["data"][0]["embedding"],
+    };
+    values
+        .as_array()
+        .and_then(|items| {
+            items
+                .iter()
+                .map(|v| v.as_f64().map(|f| f as f32))
+                .collect::<Option<Vec<_>>>()
+        })
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| ai_error("server", format!("{} sent no embedding", provider.name)))
+}
+
 /// The models the key can use, for the model picker.
 pub async fn list_models(
     http: &reqwest::Client,

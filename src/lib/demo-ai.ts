@@ -58,6 +58,12 @@ export const demoAi: AiBackend = {
     { id: "claude-opus-5-5", name: "Claude Opus 5.5" },
     { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5" },
   ],
+  // The demo collection holds four values per vector; the words decide them, so equal text finds the same points.
+  embed: async (_id, _model, text) => {
+    await wait(300);
+    const sum = [...text].reduce((n, c) => n + c.charCodeAt(0), 0);
+    return [0, 1, 2, 3].map((i) => Math.sin(sum + i));
+  },
   testProvider: async (id) => {
     await wait(500);
     const provider = providers.find((p) => p.id === id);

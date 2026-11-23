@@ -421,3 +421,78 @@ async fn lists_models_for_each_provider() {
     .await;
     assert!(bad_key.is_err());
 }
+
+#[tokio::test]
+async fn embeds_text_with_each_kind_of_provider() {
+    use dbclient_ai::embed;
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/embeddings"))
+        .and(header("authorization", "Bearer sk-test"))
+        .and(body_partial_json(
+            json!({"model": "text-embedding-3-small", "input": "kırmızı ayakkabı"}),
+        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"data": [{"embedding": [0.25, -0.5, 1.0]}]})),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/models/gemini-embedding-001:embedContent"))
+        .and(header("x-goog-api-key", "g-test"))
+        .and(body_partial_json(
+            json!({"content": {"parts": [{"text": "kırmızı ayakkabı"}]}}),
+        ))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"embedding": {"values": [0.5, 0.5]}})),
+        )
+        .mount(&server)
+        .await;
+    let http = http_client().unwrap();
+    let text = "kırmızı ayakkabı";
+
+    let openai = embed(
+        &http,
+        &provider(ProviderKind::OpenAi, &server, None),
+        Some("sk-test"),
+        None,
+        text,
+    )
+    .await
+    .unwrap();
+    assert_eq!(openai, [0.25, -0.5, 1.0]);
+    let gemini = embed(
+        &http,
+        &provider(ProviderKind::Gemini, &server, None),
+        Some("g-test"),
+        None,
+        text,
+    )
+    .await
+    .unwrap();
+    assert_eq!(gemini, [0.5, 0.5]);
+
+    // An OpenAI-compatible server (Ollama) needs no key, but needs a model.
+    let compatible = provider(ProviderKind::OpenAiCompatible, &server, None);
+    assert!(matches!(
+        embed(&http, &compatible, None, None, text).await,
+        Err(Error::Ai { reason, .. }) if reason == "not_configured"
+    ));
+    let local = embed(
+        &http,
+        &compatible,
+        None,
+        Some("text-embedding-3-small"),
+        text,
+    )
+    .await;
+    // The stand-in wants a key on that path, so the server's refusal comes back.
+    assert!(local.is_err());
+
+    // Anthropic has no embedding models.
+    assert!(matches!(
+        embed(&http, &provider(ProviderKind::Anthropic, &server, None), Some("k"), None, text).await,
+        Err(Error::Ai { reason, .. }) if reason == "not_configured"
+    ));
+}

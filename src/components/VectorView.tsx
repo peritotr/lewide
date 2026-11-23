@@ -3,6 +3,7 @@
 import { Plus, RefreshCw, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage, type CollectionInfo, type ScoredPoint, type VectorCondition, type VectorOp, type VectorPoint, type VectorSearchRequest, type VectorSearchResult } from "../lib/api";
+import { ai, type ProviderEntry } from "../lib/ai";
 import { parseConditionValue, parseVector, summarize } from "../lib/vector";
 import { setVectorCollection, type Conn, type Tab } from "../store";
 import { t, tn } from "../i18n";
@@ -44,6 +45,16 @@ export function VectorView({ tab, collection, conn }: { tab: Tab; collection: st
   const [mode, setMode] = useState<Mode>("vector");
   const [using, setUsing] = useState<string | null>(null);
   const [vectorText, setVectorText] = useState("");
+  const [queryText, setQueryText] = useState("");
+  // Providers that can embed text: every kind but Anthropic, which has no embedding models.
+  const [embedders, setEmbedders] = useState<ProviderEntry[] | null>(null);
+  const [embedding, setEmbedding] = useState<{ id: string; model: string }>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("lewide.embedding") ?? "") as { id: string; model: string };
+    } catch {
+      return { id: "", model: "" };
+    }
+  });
   const [pointId, setPointId] = useState("");
   const [filter, setFilter] = useState<VectorCondition[]>([]);
   const [adding, setAdding] = useState(false);
@@ -88,12 +99,28 @@ export function VectorView({ tab, collection, conn }: { tab: Tab; collection: st
     loadInfo();
   }, [loadInfo]);
 
+  useEffect(() => {
+    ai.listProviders().then(
+      (list) => setEmbedders(list.filter((p) => p.kind !== "anthropic")),
+      () => setEmbedders([]),
+    );
+  }, []);
+  const embedder = embedders?.find((p) => p.id === embedding.id) ?? embedders?.find((p) => p.is_default) ?? embedders?.[0] ?? null;
+  const chooseEmbedding = (next: { id: string; model: string }) => {
+    setEmbedding(next);
+    try {
+      localStorage.setItem("lewide.embedding", JSON.stringify(next));
+    } catch {
+      // Without storage the choice lasts for this tab.
+    }
+  };
+
   const spec = info?.vectors.find((v) => v.name === using) ?? info?.vectors[0] ?? null;
   const values = useMemo(() => parseVector(vectorText), [vectorText]);
   const sizeOk = values !== null && values.length > 0 && (spec?.size == null || values.length === spec.size);
   const limit = Number(topK);
   const min = minScore.trim() === "" ? null : Number(minScore);
-  const ready = !!collection && Number.isInteger(limit) && limit >= 1 && limit <= 1000 && (min === null || Number.isFinite(min)) && (mode === "vector" ? sizeOk : mode === "point" ? pointId.trim() !== "" : false);
+  const ready = !!collection && Number.isInteger(limit) && limit >= 1 && limit <= 1000 && (min === null || Number.isFinite(min)) && (mode === "vector" ? sizeOk : mode === "point" ? pointId.trim() !== "" : queryText.trim() !== "" && !!embedder);
 
   const search = useCallback(
     async (query: VectorSearchRequest["query"]) => {
@@ -116,7 +143,26 @@ export function VectorView({ tab, collection, conn }: { tab: Tab; collection: st
   );
   const submit = () => {
     if (!ready || searching) return;
+    if (mode === "text") return void searchText();
     void search(mode === "point" ? { by: "point", id: pointId.trim() } : { by: "vector", values: values! });
+  };
+  /** The text becomes a vector at the chosen provider; the search then runs as a vector search. */
+  const searchText = async () => {
+    if (!embedder) return;
+    setSearching(true);
+    setSearchError(null);
+    try {
+      const vector = await ai.embed(embedder.id, embedding.model.trim() || null, queryText.trim());
+      if (spec?.size != null && vector.length !== spec.size) {
+        setSearchError(t("The model gave {count} values; this vector holds {size}. Choose the model the collection was built with.", { count: vector.length, size: spec.size }));
+        setSearching(false);
+        return;
+      }
+      await search({ by: "vector", values: vector });
+    } catch (e) {
+      setSearchError(errorMessage(e));
+      setSearching(false);
+    }
   };
 
   // The selected point's vector is read when its panel opens.
@@ -216,12 +262,46 @@ export function VectorView({ tab, collection, conn }: { tab: Tab; collection: st
               value={mode}
               onChange={setMode}
               options={[
-                { value: "text", label: t("Text"), disabled: true, title: t("Text search needs an embedding provider, which LewIDE does not have yet.") },
+                { value: "text", label: t("Text") },
                 { value: "vector", label: t("Vector") },
                 { value: "point", label: t("Point ID") },
               ]}
             />
-            {mode === "point" ? (
+            {mode === "text" ? (
+              // Not drawn in the design: the provider and model that turn the text into a vector.
+              <div className="flex flex-col gap-s2">
+                <textarea
+                  aria-label={t("Search text")}
+                  autoFocus
+                  spellCheck={false}
+                  placeholder={t("red running shoes")}
+                  className="h-[72px] resize-y border border-line bg-panel p-s2 text-[13px] leading-[18px] focus:border-accent focus:outline-none"
+                  value={queryText}
+                  onChange={(e) => setQueryText(e.target.value)}
+                />
+                {embedders !== null && embedders.length === 0 ? (
+                  <p className="text-[12px] text-text-2">{t("Add an OpenAI, Gemini or OpenAI-compatible provider (such as Ollama) under Settings › AI to search by text. Anthropic has no embedding models.")}</p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-s2">
+                    <select aria-label={t("Embedding provider")} className={select} value={embedder?.id ?? ""} onChange={(e) => chooseEmbedding({ id: e.target.value, model: "" })}>
+                      {(embedders ?? []).map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                    <TextInput
+                      mono
+                      aria-label={t("Embedding model")}
+                      value={embedding.model}
+                      placeholder={embedder?.kind === "open_ai" ? "text-embedding-3-small" : embedder?.kind === "gemini" ? "gemini-embedding-001" : "nomic-embed-text"}
+                      onChange={(e) => chooseEmbedding({ id: embedder?.id ?? "", model: e.target.value })}
+                    />
+                  </div>
+                )}
+                {embedder && <p className="text-[11.5px] text-text-3">{t("The text is sent to {provider} to become a vector. Nothing from the database is sent.", { provider: embedder.name })}</p>}
+              </div>
+            ) : mode === "point" ? (
               <Field label={t("Point ID")} helper={t("Searches with this point's vector.")}>
                 <TextInput mono autoFocus value={pointId} placeholder="42" onChange={(e) => setPointId(e.target.value)} />
               </Field>

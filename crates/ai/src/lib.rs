@@ -13,7 +13,8 @@ mod sse;
 
 pub use providers::{
     ChatMessage, ChatRequest, Completion, ModelInfo, ProviderConfig, ProviderKind, Role,
-    StopReason, StreamEvent, Usage, http_client, list_models, stream_chat,
+    StopReason, StreamEvent, Usage, default_embedding_model, embed, http_client, list_models,
+    stream_chat,
 };
 pub use settings::{AiSettings, AiStore, ProviderEntry};
 pub use tokio_util::sync::CancellationToken;

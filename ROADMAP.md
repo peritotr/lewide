@@ -22,7 +22,7 @@ yet. It changes as work lands.
 | MongoDB | ✅ Supported | Documents as tree, table or JSON; in-place edits |
 | Elasticsearch, OpenSearch | ✅ Supported | Indices in the document view: Query DSL, field shorthand or query string; edits; Dev Tools requests in query tabs |
 | pgvector | ✅ Supported | Tables with a vector column searched like a vector database; SQL as usual |
-| Qdrant | ✅ Supported | Vector search with payload filters; search by text needs an embedding provider |
+| Qdrant | ✅ Supported | Vector search with payload filters; search by text through an AI provider's embedding model |
 | Neo4j | ✅ Supported | Graph canvas, table and text views; Cypher editor with Explain, Format and Save |
 | Milvus | ✅ Supported | Vector search with filters and named vectors; read-only |
 | InfluxDB 3 | ✅ Supported | SQL over time series; read-only grid (InfluxDB is written with line protocol) |
@@ -42,7 +42,6 @@ before every write), English and Turkish, light and dark themes.
 **Finishing what exists**
 
 - Changing columns on ClickHouse; creating and editing triggers
-- Text search for vector databases through an embedding provider
 - Structured AI findings (review results shown in place, not only as text)
 
 **Release**
