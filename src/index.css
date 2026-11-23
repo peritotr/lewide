@@ -1,0 +1,399 @@
+/* Fonts are bundled with the app; nothing is loaded from the network. */
+@import "@fontsource/barlow/400.css";
+@import "@fontsource/barlow/500.css";
+@import "@fontsource/barlow-condensed/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/400-italic.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "tailwindcss";
+@import "./tokens.css";
+
+/* Tailwind names for the design tokens in tokens.css. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-panel: var(--panel);
+  --color-text: var(--text);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+  --color-line: var(--line);
+  --color-line-2: var(--line-2);
+  --color-hover: var(--hover);
+  --color-accent: var(--accent);
+  --color-accent-text: var(--accent-text);
+  --color-accent-fill: var(--accent-fill);
+  --color-on-accent: var(--on-accent);
+  --color-accent-tint: var(--accent-tint);
+  --color-warn: var(--warn);
+  --color-warn-text: var(--warn-text);
+  --color-warn-tint: var(--warn-tint);
+  --color-danger: var(--danger);
+  --color-ok: var(--ok);
+  --color-scrim: var(--scrim);
+  --color-danger-tint: var(--danger-tint);
+  --color-ok-tint: var(--ok-tint);
+  --color-on-danger: var(--on-danger);
+
+  --font-heading: "Barlow Condensed", system-ui, sans-serif;
+  --font-body: "Barlow", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+
+  --spacing-s1: 3.4px;
+  --spacing-s2: 6.8px;
+  --spacing-s3: 10.2px;
+  --spacing-s4: 13.6px;
+  --spacing-s6: 20.4px;
+  --spacing-s8: 27.2px;
+  --spacing-row: var(--row-h);
+  --spacing-tree: var(--tree-h);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.3 var(--font-body);
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+button {
+  cursor: pointer;
+}
+button:disabled,
+[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+input,
+textarea,
+.selectable {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Lucide icons follow the design's 1.5 stroke. */
+svg.lucide {
+  stroke-width: 1.5;
+  flex: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  button,
+  [role="tab"],
+  [role="row"] {
+    transition: background-color 100ms;
+  }
+}
+
+/* Registration mark: an 11px crosshair centred on a corner of a `relative` box. */
+.reg {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  color: color-mix(in srgb, var(--text) 55%, transparent);
+  pointer-events: none;
+  z-index: 5;
+}
+.reg::before,
+.reg::after {
+  content: "";
+  position: absolute;
+  background: currentColor;
+}
+.reg::before {
+  left: 5px;
+  top: 0;
+  width: 1px;
+  height: 100%;
+}
+.reg::after {
+  top: 5px;
+  left: 0;
+  width: 100%;
+  height: 1px;
+}
+.reg-tl { top: -6px; left: -6px; }
+.reg-tr { top: -6px; right: -6px; }
+.reg-bl { bottom: -6px; left: -6px; }
+.reg-br { bottom: -6px; right: -6px; }
+
+.label {
+  font: 600 11px/1 var(--font-heading);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.danger-band {
+  background: repeating-linear-gradient(135deg, var(--danger) 0 6px, transparent 6px 12px);
+}
+
+/* Connecting: a ring with one quarter open, turning. */
+.status-ring {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--accent);
+  border-right-color: transparent;
+  border-radius: 50%;
+}
+/* Test in progress: a segment sliding along a track. */
+.test-bar {
+  position: relative;
+  width: 120px;
+  height: 4px;
+  overflow: hidden;
+  background: var(--line);
+}
+.test-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0 70% 0 0;
+  background: var(--accent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .status-ring {
+    animation: turn 0.8s linear infinite;
+  }
+  .test-bar::after {
+    animation: slide 1.2s linear infinite;
+  }
+}
+@keyframes turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(334%);
+  }
+}
+
+/* A statement is running: a segment sliding along a hairline under the results header. */
+.run-bar {
+  position: relative;
+  height: 2px;
+  overflow: hidden;
+  background: var(--line);
+}
+.run-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0 76% 0 0;
+  background: var(--accent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .run-bar::after {
+    animation: slide-wide 1.2s linear infinite;
+  }
+}
+@keyframes slide-wide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(417%);
+  }
+}
+
+/* Error marks in the editor: a band across the line, a diamond in the gutter, a wavy underline on the token. */
+.cm-editor .cm-error-line {
+  background: var(--danger-tint);
+}
+.cm-editor .cm-error-token {
+  text-decoration: underline wavy var(--danger);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+.cm-editor .cm-error-gutter {
+  width: 14px;
+}
+.cm-editor .cm-error-diamond {
+  width: 8px;
+  height: 8px;
+  margin: 6px 0 0 5px;
+  background: var(--danger);
+  transform: rotate(45deg);
+}
+.cm-editor .cm-placeholder {
+  color: var(--text-3);
+}
+
+.production-band {
+  background: repeating-linear-gradient(135deg, var(--warn) 0 6px, transparent 6px 12px);
+}
+
+/* CodeMirror, themed from the tokens. */
+.cm-editor {
+  height: 100%;
+  background: transparent;
+  color: var(--text);
+}
+.cm-editor.cm-focused {
+  outline: none;
+}
+.cm-editor .cm-scroller {
+  font: var(--code-size, 13px) / calc(var(--code-size, 13px) + 7px) var(--mono);
+  padding-top: var(--space-2);
+}
+.cm-editor .cm-content {
+  padding: 0 0 0 12px;
+  caret-color: var(--accent-text);
+}
+.cm-editor .cm-line {
+  padding: 0;
+}
+.cm-editor .cm-gutters {
+  background: transparent;
+  border: 0;
+  color: var(--text-3);
+}
+.cm-editor .cm-lineNumbers .cm-gutterElement {
+  min-width: 50px;
+  padding: 0 12px 0 0;
+  text-align: right;
+}
+.cm-editor .cm-activeLineGutter {
+  background: transparent;
+  color: var(--text);
+}
+.cm-editor .cm-activeLine {
+  background: var(--hover);
+}
+.cm-editor .cm-cursor {
+  border-left: 2px solid var(--accent-text);
+}
+.cm-editor .cm-selectionBackground,
+.cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+/* Extra specificity: the mark sits inside spans the syntax highlighter colours. */
+.cm-editor .cm-sql-function,
+.cm-editor .cm-sql-function span {
+  color: var(--syn-fn);
+}
+/* Completion list (Q10). */
+.cm-editor .cm-tooltip {
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--panel);
+  box-shadow: var(--shadow-md);
+}
+.cm-editor .cm-tooltip.cm-tooltip-autocomplete {
+  width: 420px;
+  max-width: calc(100vw - 32px);
+}
+.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul {
+  width: 100%;
+  max-width: none;
+}
+.cm-editor .cm-tooltip-autocomplete > ul {
+  font: 12.5px/24px var(--mono);
+  /* Eight rows, then it scrolls. */
+  max-height: 192px;
+  min-width: 0;
+  max-width: none;
+}
+.cm-editor .cm-tooltip-autocomplete > ul > li {
+  display: flex;
+  align-items: center;
+  gap: 6.8px;
+  height: 24px;
+  padding: 0 6.8px;
+  color: var(--text);
+}
+.cm-editor .cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background: var(--accent-tint);
+  box-shadow: inset 2px 0 0 var(--accent);
+  color: var(--text);
+}
+.cm-editor .cm-completionLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cm-editor .cm-completionMatchedText {
+  color: var(--accent-text);
+  font-weight: 500;
+  text-decoration: none;
+}
+.cm-editor .cm-completionDetail {
+  margin-left: auto;
+  padding-left: 10px;
+  color: var(--text-2);
+  font: 11.5px var(--font-body);
+  font-style: normal;
+  white-space: nowrap;
+}
+.cm-editor .cm-completion-kind {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 14px;
+  border: 1px solid var(--text-3);
+  color: var(--text-2);
+  font: 10px/1 var(--mono);
+}
+/* The hint line; its text comes from the interface language. */
+.cm-editor .cm-tooltip-autocomplete::after {
+  content: var(--completion-hint, "");
+  display: block;
+  height: 24px;
+  padding: 0 6.8px;
+  border-top: 1px solid var(--line-2);
+  color: var(--text-3);
+  font: 11px/24px var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+}
+/* The bar marking the statement that Run would execute. */
+.cm-editor .cm-stmt-gutter {
+  width: 2px;
+}
+.cm-editor .cm-stmt-gutter .cm-stmt-mark {
+  width: 2px;
+  height: 100%;
+  background: var(--accent);
+}
+
+/* Scrollbars, as in the component library: a 10px track with a 6px thumb. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) var(--bg);
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+  background: var(--bg);
+}
+::-webkit-scrollbar-track {
+  box-shadow: inset 1px 0 0 var(--line-2);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scroll-thumb-hover);
+}
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--text-3);
+}
+::-webkit-scrollbar-corner {
+  background: var(--bg);
+}

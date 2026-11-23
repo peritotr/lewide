@@ -1,0 +1,57 @@
+[package]
+name = "dbclient"
+version = "0.1.0"
+description = "LewIDE: an open-source desktop client for every database"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+default-run = "dbclient"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "dbclient_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+# Development only: serves the commands over HTTP on this machine, so the
+# interface running in a browser can be tried against the real core.
+bridge = ["tauri/test"]
+
+[[bin]]
+name = "bridge"
+required-features = ["bridge"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dbclient-core = { version = "0.1.0", path = "../crates/core" }
+dbclient-driver-sqlite = { version = "0.1.0", path = "../crates/driver-sqlite" }
+tokio = { version = "1.54.1", features = ["sync", "time"] }
+dbclient-driver-postgres = { version = "0.1.0", path = "../crates/driver-postgres" }
+dbclient-driver-mysql = { version = "0.1.0", path = "../crates/driver-mysql" }
+dbclient-driver-redis = { version = "0.1.0", path = "../crates/driver-redis" }
+dbclient-driver-qdrant = { version = "0.1.0", path = "../crates/driver-qdrant" }
+dbclient-driver-neo4j = { version = "0.1.0", path = "../crates/driver-neo4j" }
+dbclient-driver-mongodb = { version = "0.1.0", path = "../crates/driver-mongodb" }
+dbclient-driver-sqlserver = { version = "0.1.0", path = "../crates/driver-sqlserver" }
+dbclient-driver-clickhouse = { version = "0.1.0", path = "../crates/driver-clickhouse" }
+dbclient-driver-duckdb = { version = "0.1.0", path = "../crates/driver-duckdb" }
+dbclient-tunnel = { version = "0.1.0", path = "../crates/tunnel" }
+dbclient-store = { version = "0.1.0", path = "../crates/store" }
+tauri-plugin-dialog = "2.8.4"
+dbclient-ai = { version = "0.1.0", path = "../crates/ai" }
+reqwest = { version = "0.13.5", default-features = false }
+
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+tokio = { version = "1.54.1", features = ["rt", "macros"] }

@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+
+      - run: pnpm install --frozen-lockfile
+      # The Tauri crate embeds dist/ at compile time, so the frontend builds first.
+      - run: pnpm build
+      - run: pnpm test
+      # Every text in the interface has a translation, and no translation is left over.
+      - run: pnpm i18n:check
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  integration:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # PostgreSQL and MySQL with TLS, plus an SSH server for the tunnel tests.
+      - run: scripts/test-servers.sh up && cat target/test-servers/env >> "$GITHUB_ENV"
+      - run: cargo test -p dbclient-driver-postgres -p dbclient-driver-mysql -p dbclient-tunnel
+
+  # The MySQL driver against MariaDB and the PostgreSQL driver against CockroachDB.
+  compatible-engines:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: scripts/test-servers.sh up && scripts/test-servers.sh compat
+      # These servers have no certificates, so the TLS tests are left out.
+      - name: MySQL driver on MariaDB
+        run: |
+          . target/test-servers/env.sh
+          env -u DBCLIENT_TEST_TLS_CA DBCLIENT_TEST_MYSQL_URL="$DBCLIENT_TEST_MARIADB_URL" \
+            cargo test -p dbclient-driver-mysql --test live
+      - name: PostgreSQL driver on CockroachDB
+        run: |
+          . target/test-servers/env.sh
+          env -u DBCLIENT_TEST_TLS_CA DBCLIENT_TEST_POSTGRES_URL="$DBCLIENT_TEST_COCKROACH_URL" \
+            cargo test -p dbclient-driver-postgres --test live -- --test-threads=1
+
+  # Each other engine against a throwaway container. The scripts print
+  # `export NAME=value` lines; those become the job's environment.
+  engines:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - engine: redis
+            up: scripts/test-redis.sh up
+          - engine: mongodb
+            up: scripts/test-mongodb.sh up
+          - engine: qdrant
+            up: scripts/test-qdrant.sh up && scripts/test-qdrant.sh tls
+          - engine: neo4j
+            up: scripts/test-neo4j.sh up
+          - engine: clickhouse
+            up: scripts/test-clickhouse.sh up
+          - engine: sqlserver
+            up: scripts/test-sqlserver.sh up
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Start ${{ matrix.engine }}
+        # `shell: bash` adds pipefail: a script that fails must fail the job, not vanish in the pipe.
+        shell: bash
+        run: (${{ matrix.up }}) | sed -n "s/^export //p" | tr -d "'" >> "$GITHUB_ENV"
+      - run: cargo test -p dbclient-driver-${{ matrix.engine }}

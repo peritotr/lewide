@@ -1,0 +1,18 @@
+[package]
+name = "dbclient-core"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+async-trait = "0.1.92"
+base64 = "0.23.1"
+serde = { version = "1.0.229", features = ["derive"] }
+# preserve_order: imported JSON columns and documents keep the order they were written in.
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+thiserror = "2.0.21"
+
+[dev-dependencies]
+tokio = { version = "1.54.1", features = ["rt", "macros"] }

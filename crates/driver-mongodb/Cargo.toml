@@ -1,0 +1,22 @@
+[package]
+name = "dbclient-driver-mongodb"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+async-trait = "0.1.92"
+dbclient-core = { version = "0.1.0", path = "../core" }
+futures-util = "0.3.34"
+# socks5-proxy: the only way this driver offers to send the bytes to one
+# address while checking the certificate against another name (see route.rs).
+mongodb = { version = "3.10.2", features = ["socks5-proxy"] }
+# preserve_order: documents are returned as JSON values and their field order
+# is part of the data.
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+tokio = { version = "1.54.1", features = ["net", "io-util", "rt", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1.54.1", features = ["rt", "macros", "time"] }
