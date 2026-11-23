@@ -115,14 +115,14 @@ Always run `… down` afterwards. CI (`.github/workflows/ci.yml`) runs the check
 | Type (picker code) | Driver crate | Backend | UI | Verified in the UI against a real server |
 |---|---|---|---|---|
 | PostgreSQL (Pg), CockroachDB (Cr) | driver-postgres | done | done: grid, editing, structure, import/export | yes |
-| MySQL (My), MariaDB (Ma) | driver-mysql | done | done (same views) | not through the bridge; driver live tests only |
-| SQLite (Sq) | driver-sqlite | done | done | not recorded; assume untested |
+| MySQL (My), MariaDB (Ma) | driver-mysql | done | done (same views) | MySQL 8.4: connect, table, cell edit with Turkish text applied in one transaction, WHERE filter, structure, DDL (MariaDB: driver live tests only) |
+| SQLite (Sq) | driver-sqlite | done | done | SQLite 3.54: open a file, table, cell edit applied and written to the file, structure |
 | DuckDB (Dk) | driver-duckdb | done | done: the relational views, editing and column changes | DuckDB 2.0.1 (bundled): open a file, tree, multi-statement run with Parser Error and line/column, messages with row counts, paging, cell edit applied in one transaction, WHERE filter, exact count, structure and DDL, renaming a column, cancel; import and SQL/CSV export through the bridge's commands; EXPLAIN |
 | ClickHouse (Ch) | driver-clickhouse | done (no TLS test, no ALTER) | done: grid and structure read-only | ClickHouse 25.8: connect, tree with row estimates, multi-statement run with error code and position, cancel, table in sorting-key order, WHERE filter, exact count, structure, import and SQL/CSV export through the bridge's commands |
 | SQL Server (Ms) | driver-sqlserver | done (no ALTER, no cancel) | done: structure is read-only | SQL Server 2022: connect, tree, multi-statement run with error code and line, paging, cell edit and apply, WHERE filter, exact count, structure, Explain message, Format; import and SQL/CSV export through the bridge's commands |
-| Redis (Rd), Valkey (Vk) | driver-redis | done, with TLS | done: `KeyValueView.tsx` (K01–K05) | connect, scan by pattern, read every type, hash field edit |
-| Qdrant (Qd) | driver-qdrant | done (read-only by design) | done: `VectorView.tsx` (V01–V02) | connect, search by vector, point panel |
-| MongoDB (Mg) | driver-mongodb | done | done: `DocumentView.tsx` (D01–D03) | connect, tree, filter, invalid-filter line, in-place edit |
+| Redis (Rd), Valkey (Vk) | driver-redis | done, with TLS | done: `KeyValueView.tsx` (K01–K05) | Redis 7.4: database number from the form, scan, read every type, hash field edit, save a string (KEEPTTL), set TTL, rename, add key, delete key, Production confirmation; TLS through the driver's live tests |
+| Qdrant (Qd) | driver-qdrant | done (read-only by design) | done: `VectorView.tsx` (V01–V02) | Qdrant 1.20: API key from the form, search by vector and by point id, payload filter, point panel, Find similar |
+| MongoDB (Mg) | driver-mongodb | done | done: `DocumentView.tsx` (D01–D03) | MongoDB 8.0: root user with `authSource` from the Advanced tab, tree, Table and JSON views, paging, filter, in-place edit, add document (types kept), delete document, Production confirmation |
 | Neo4j (N4) | driver-neo4j | done | done: `GraphView.tsx` (R01–R02), sidebar labels and relationship types | multi-statement run, canvas, selection and side panel, drag, pan, zoom, Fit, expand, hide/show, Table and Text views, syntax error with caret, write counters, sidebar labels/types |
 | Oracle, Snowflake, BigQuery, TiDB, YugabyteDB, Couchbase, pgvector, Milvus, TimescaleDB, InfluxDB, Elasticsearch, OpenSearch | — | not started | listed in the picker as "not supported yet" | — |
 
@@ -132,20 +132,20 @@ Known limits and untried paths:
 - **DuckDB:** DuckDB refuses ALTER on a table that a view or foreign key depends on (its own error is shown); no "create a new file" option in the form; `https://` files need `INSTALL httpfs`; the plan view is text only. Not tried: Production, a locked file, `ATTACH`.
 - **ClickHouse:** not tried: TLS against a real certificate, the SSH tunnel in the UI, Production, ClickHouse Cloud, clusters. The editor highlights with the MySQL grammar; the filter uses `startsWith` for "starts with".
 - **SQL Server:** left out on purpose: column editing, query plans, cancel, Windows/Azure AD sign-in, named instances. Not tried: TLS against a real certificate, the SSH tunnel in the UI, Production. Statement splitting in `src/lib/sql.ts` is a scanner, so unusual T-SQL can still be split wrongly.
-- **MongoDB:** not tried in the UI: Table and JSON views, add/delete document, paging, Production confirmation. Not built: syntax colours in query fields, change-type menu, nested-value viewer, Export, aggregation, index listing. A `null` value cannot be edited.
-- **Redis:** not tried in the UI: save a string, rename, delete, TTL, add key, Production confirmation. Streams and module types are read-only. Key prefixes are not grouped.
-- **Qdrant:** not tried in the UI: payload filter, search by point id, "Find similar". Text search needs an embedding provider. No Export.
+- **MongoDB:** the sidebar's document count is the server's estimate and is not refreshed after adding or deleting. Not built: syntax colours in query fields, change-type menu, nested-value viewer, Export, aggregation, index listing. A `null` value cannot be edited.
+- **Redis:** streams and module types are read-only. Key prefixes are not grouped.
+- **Qdrant:** text search needs an embedding provider. No Export.
+- **SQLite:** an `INTEGER PRIMARY KEY` column shows as nullable, as SQLite's own table info says, although it cannot hold NULL (it is the row id). Left as is on purpose: the import dialog treats non-nullable columns without a default as required, which would wrongly require the id.
 
 ## 5. Next steps
 
 See [ROADMAP.md](ROADMAP.md) for the public list. In more detail:
 
-1. **Click through the untested paths** above for MongoDB, Redis and Qdrant on real servers.
-2. **Next connectors**, suggested order: pgvector (driver-postgres plus `VectorStore`, reusing `VectorView`), then Elasticsearch / OpenSearch (needs a search view that is not designed yet). For each: crate with `Driver` + `Connection` (+ model trait), `tests/live.rs`, `scripts/test-<name>.sh up|down`, registration in `src-tauri`, `driver:` in `src/lib/types.ts`, demo data, view, translations, bridge check, CI `engines` entry.
-3. **Cypher in the shared editor** (needs approval: makes `src/components/Editor.tsx` language-neutral), then `Explain`, `Format` and `Save` for graph tabs.
-4. **SQL Server follow-ups** (each needs approval): column editing in T-SQL, query plans, named instances.
-5. **Housekeeping:** the four copies of the rustls setup (postgres, qdrant, neo4j, clickhouse) could move into one shared helper.
-6. **Release:** installers for the three systems through CI, code signing.
+1. **Next connectors**, suggested order: pgvector (driver-postgres plus `VectorStore`, reusing `VectorView`), then Elasticsearch / OpenSearch (needs a search view that is not designed yet). For each: crate with `Driver` + `Connection` (+ model trait), `tests/live.rs`, `scripts/test-<name>.sh up|down`, registration in `src-tauri`, `driver:` in `src/lib/types.ts`, demo data, view, translations, bridge check, CI `engines` entry.
+2. **Cypher in the shared editor** (needs approval: makes `src/components/Editor.tsx` language-neutral), then `Explain`, `Format` and `Save` for graph tabs.
+3. **SQL Server follow-ups** (each needs approval): column editing in T-SQL, query plans, named instances.
+4. **Housekeeping:** the four copies of the rustls setup (postgres, qdrant, neo4j, clickhouse) could move into one shared helper.
+5. **Release:** installers for the three systems through CI, code signing.
 
 ## 6. Known problems
 
