@@ -47,15 +47,31 @@ hepsini tek yerde toplar.
 ## Desteklenen veritabanları
 
 PostgreSQL, CockroachDB, MySQL, MariaDB, SQLite, Microsoft SQL Server,
-ClickHouse, DuckDB (sunucusuz, uygulamanın içinde), Redis, Valkey, MongoDB, Qdrant ve Neo4j.
+ClickHouse, DuckDB (sunucusuz, uygulamanın içinde), Redis, Valkey, MongoDB, Qdrant, pgvector, Elasticsearch, OpenSearch ve Neo4j.
 Ayrıntılar için [İngilizce README](README.md#supported-databases), sıradakiler
 için [yol haritası](ROADMAP.md).
 
 ## Kurulum
 
-macOS, Windows ve Linux için hazır kurulum dosyaları ilk sürümle gelecek;
-haberdar olmak için depoya ⭐ yıldız ver ya da izlemeye al. O zamana kadar
-kaynaktan derleyebilirsin:
+Sistemine uygun kurulum dosyasını
+**[son sürümden](https://github.com/peritotr/lewide/releases/latest)** indir:
+
+| Sistem | Dosya |
+|---|---|
+| macOS, Apple silicon (M1 ve sonrası) | `LewIDE_…_aarch64.dmg` |
+| macOS, Intel | `LewIDE_…_x64.dmg` |
+| Windows 10 ve 11 | `LewIDE_…_x64-setup.exe` ya da `.msi` |
+| Linux | `.AppImage` (her dağıtım), `.deb` (Debian, Ubuntu) ya da `.rpm` (Fedora, openSUSE) |
+
+Kurulum dosyaları henüz ücretli bir geliştirici sertifikasıyla imzalı değil,
+bu yüzden ilk açılışta uyarı çıkar:
+
+- **macOS:** uygulamayı bir kez aç, sonra Sistem Ayarları → Gizlilik ve Güvenlik'te **Yine de Aç**'ı seç.
+- **Windows:** SmartScreen "Windows bilgisayarınızı korudu" der; **Ek bilgi → Yine de çalıştır**'ı seç.
+
+Yeni sürümlerden haberdar olmak için depoya ⭐ yıldız ver ya da izlemeye al.
+
+### Kaynaktan derleme
 
 ```bash
 git clone https://github.com/peritotr/lewide.git

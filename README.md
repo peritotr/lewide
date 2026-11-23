@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.svg">
-  <img src="docs/assets/banner-light.svg" width="100%" alt="LewIDE — the open-source desktop client for every database: PostgreSQL, MySQL, SQLite, SQL Server, ClickHouse, DuckDB, Redis, MongoDB, Qdrant and Neo4j">
+  <img src="docs/assets/banner-light.svg" width="100%" alt="LewIDE — the open-source desktop client for every database: PostgreSQL, MySQL, SQLite, SQL Server, ClickHouse, DuckDB, Redis, MongoDB, Qdrant, pgvector, Elasticsearch and Neo4j">
 </picture>
 
 <h3>One free, open-source app for every database you work with.</h3>
@@ -22,7 +22,7 @@ macOS, Windows and Linux. It opens relational databases, document stores,
 key-value stores, vector databases and graph databases in one fast desktop
 app, with an **AI assistant that reads your schema but never your rows**. If
 you have been switching between DBeaver, TablePlus, Navicat, DataGrip,
-MongoDB Compass, RedisInsight and Neo4j Browser, LewIDE puts them in one place.
+MongoDB Compass, RedisInsight, Neo4j Browser and Kibana Dev Tools, LewIDE puts them in one place.
 
 <div align="center">
 <picture>
@@ -57,10 +57,11 @@ MongoDB Compass, RedisInsight and Neo4j Browser, LewIDE puts them in one place.
 | ![Redis](https://img.shields.io/badge/-Redis-DC382D?logo=redis&logoColor=white) | Redis, Valkey | Key browser with editors for every core type |
 | ![MongoDB](https://img.shields.io/badge/-MongoDB-47A248?logo=mongodb&logoColor=white) | MongoDB | Documents as a tree, a table or JSON, edited in place |
 | ![Qdrant](https://img.shields.io/badge/-Qdrant-DC244C) | Qdrant | Vector similarity search with payload filters |
+| ![Elasticsearch](https://img.shields.io/badge/-Elasticsearch-005571?logo=elasticsearch&logoColor=white) | Elasticsearch, OpenSearch | Search indices with Query DSL or query strings, edit documents, Dev Tools requests |
+| ![pgvector](https://img.shields.io/badge/-pgvector-4169E1?logo=postgresql&logoColor=white) | pgvector | Vector search on PostgreSQL tables, with SQL beside it |
 | ![Neo4j](https://img.shields.io/badge/-Neo4j-4581C3?logo=neo4j&logoColor=white) | Neo4j | Cypher with a graph canvas, a table and text |
 
-More are on the way: pgvector, TiDB, YugabyteDB, TimescaleDB, Elasticsearch,
-OpenSearch, Oracle, Snowflake, BigQuery and others. See the [roadmap](ROADMAP.md).
+More are on the way: TiDB, YugabyteDB, TimescaleDB, Oracle, Snowflake, BigQuery and others. See the [roadmap](ROADMAP.md).
 
 ## A closer look
 
@@ -85,9 +86,25 @@ OpenSearch, Oracle, Snowflake, BigQuery and others. See the [roadmap](ROADMAP.md
 
 ## Install
 
-Ready-made installers for macOS, Windows and Linux come with the first
-release; ⭐ star or watch the repository to hear about it. Until then, build
-it from source:
+Download the installer for your system from the
+**[latest release](https://github.com/peritotr/lewide/releases/latest)**:
+
+| System | File |
+|---|---|
+| macOS, Apple silicon (M1 and later) | `LewIDE_…_aarch64.dmg` |
+| macOS, Intel | `LewIDE_…_x64.dmg` |
+| Windows 10 and 11 | `LewIDE_…_x64-setup.exe` or `.msi` |
+| Linux | `.AppImage` (any distribution), `.deb` (Debian, Ubuntu) or `.rpm` (Fedora, openSUSE) |
+
+The installers are not signed with a paid developer certificate yet, so the
+first launch shows a warning:
+
+- **macOS:** open the app once, then go to System Settings → Privacy & Security and choose **Open Anyway**.
+- **Windows:** SmartScreen says "Windows protected your PC"; choose **More info → Run anyway**.
+
+⭐ Star or watch the repository to hear about new releases.
+
+### Build from source
 
 ```bash
 git clone https://github.com/peritotr/lewide.git
