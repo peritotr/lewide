@@ -153,7 +153,7 @@ See [ROADMAP.md](ROADMAP.md) for the public list. In more detail:
 2. **Cypher in the shared editor** (needs approval: makes `src/components/Editor.tsx` language-neutral), then `Explain`, `Format` and `Save` for graph tabs.
 3. **SQL Server follow-ups** (each needs approval): column editing in T-SQL, query plans, named instances.
 4. **Housekeeping:** the four copies of the rustls setup (postgres, qdrant, neo4j, clickhouse) could move into one shared helper.
-5. **Release:** installers for the three systems through CI, code signing.
+5. **Release:** v0.1.0 is published (2026-11-23). Pushing a `v*` tag runs `.github/workflows/release.yml`: tauri-action builds macOS (arm64, x64; ad-hoc signed), Windows (NSIS, MSI) and Linux (AppImage, deb, rpm) into a draft release, which is published by hand. For v0.1.0 the jobs could not create the release (`Resource not accessible by integration` although the token had `contents: write`); the draft was created with `gh release create --draft` and the jobs re-run, after which uploads worked. The permission is now on the job; if the next tag fails the same way, the repository's Settings → Actions → Workflow permissions must be set to read and write (the owner's decision). Still to do, each needing the owner's decision: paid code signing (Apple, Windows), automatic updates (needs an updater key in the repository secrets).
 
 ## 6. Known problems
 
