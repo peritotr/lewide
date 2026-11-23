@@ -887,6 +887,7 @@ async fn alters_columns() {
         async move {
             let sql = statements(
                 conn.dialect(),
+                Some("t_alter"),
                 &conn.qualified(Some("t_alter"), "items"),
                 &changes,
             )?;
@@ -1038,4 +1039,104 @@ async fn reads_comments_enums_index_details_and_referencing_keys() {
     conn.execute(query("DROP DATABASE t_meta2", None))
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn adds_and_drops_indexes_keys_and_triggers() {
+    use dbclient_core::structure::{ColumnChange, IndexColumn, apply_on, statements};
+    let conn = connect_or_skip!();
+    let triggers = !tidb(conn.as_ref()).await;
+    conn.execute_all(query(
+        "DROP DATABASE IF EXISTS t_keys; CREATE DATABASE t_keys; \
+         CREATE TABLE t_keys.users (id int PRIMARY KEY); \
+         CREATE TABLE t_keys.orders (id int PRIMARY KEY, user_id int, created int)",
+        None,
+    ))
+    .await
+    .unwrap();
+    if triggers {
+        conn.execute(query("CREATE TRIGGER t_keys.audit BEFORE INSERT ON t_keys.orders FOR EACH ROW SET NEW.created = 1", None))
+            .await
+            .unwrap();
+    }
+    let run = |changes: Vec<ColumnChange>| {
+        let conn = &conn;
+        async move {
+            let sql = statements(
+                conn.dialect(),
+                Some("t_keys"),
+                &conn.qualified(Some("t_keys"), "orders"),
+                &changes,
+            )?;
+            apply_on(conn.as_ref(), sql).await
+        }
+    };
+    run(vec![
+        ColumnChange::AddIndex {
+            name: "orders_by_user".into(),
+            columns: vec![
+                IndexColumn {
+                    name: "user_id".into(),
+                    descending: false,
+                },
+                IndexColumn {
+                    name: "created".into(),
+                    descending: false,
+                },
+            ],
+            unique: true,
+        },
+        ColumnChange::AddForeignKey {
+            name: "orders_user".into(),
+            columns: vec!["user_id".into()],
+            ref_namespace: None,
+            ref_table: "users".into(),
+            ref_columns: vec!["id".into()],
+            on_delete: Some("set null".into()),
+            on_update: Some("CASCADE".into()),
+        },
+    ])
+    .await
+    .unwrap();
+    let structure = conn
+        .table_structure(Some("t_keys"), "orders")
+        .await
+        .unwrap();
+    let index = structure
+        .indexes
+        .iter()
+        .find(|i| i.name == "orders_by_user")
+        .expect("the new index");
+    assert!(index.unique);
+    assert_eq!(index.columns, ["user_id", "created"]);
+    assert!(
+        structure
+            .foreign_keys
+            .iter()
+            .any(|k| k.name.as_deref() == Some("orders_user"))
+    );
+    assert_eq!(structure.triggers.len(), usize::from(triggers));
+
+    let mut drops = vec![ColumnChange::DropForeignKey {
+        name: "orders_user".into(),
+    }];
+    if triggers {
+        drops.push(ColumnChange::DropTrigger {
+            name: "audit".into(),
+        });
+    }
+    run(drops).await.unwrap();
+    // MySQL keeps an index for the key's column; the unique one can go now that the key is gone.
+    run(vec![ColumnChange::DropIndex {
+        name: "orders_by_user".into(),
+    }])
+    .await
+    .unwrap();
+    let structure = conn
+        .table_structure(Some("t_keys"), "orders")
+        .await
+        .unwrap();
+    assert!(structure.indexes.iter().all(|i| i.name != "orders_by_user"));
+    assert!(structure.foreign_keys.is_empty());
+    assert!(structure.triggers.is_empty());
 }

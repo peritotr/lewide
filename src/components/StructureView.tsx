@@ -1,10 +1,11 @@
 // The structure of a table or view (S01, S03–S06, S08–S10). Columns can be
-// added, changed and dropped (S02); the changes stay pending until their
-// ALTER TABLE statements are reviewed and applied (S07). Reordering columns and
-// changing indexes, foreign keys and triggers are not built.
-import { ArrowUpRight, Check, KeyRound, Lock, Minus, Pencil, Plus, TriangleAlert, Undo2 } from "lucide-react";
+// added, changed and dropped (S02); indexes and foreign keys added and dropped;
+// triggers dropped. Every change stays pending until its statements are
+// reviewed and applied (S07). The index and key forms are not drawn in the
+// design. Reordering columns and editing a trigger's body are not built.
+import { ArrowUpRight, Check, KeyRound, Lock, Minus, Pencil, Plus, Trash2, TriangleAlert, Undo2, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import type { ColumnChange, ColumnDef, ColumnDescription, ForeignKey, TableStructure } from "../lib/api";
+import { api, errorMessage, type ColumnChange, type ColumnDef, type ColumnDescription, type ForeignKey, type TableStructure } from "../lib/api";
 import { openDialog,
   applyStructureChanges,
   dismissStructureApply,
@@ -19,10 +20,10 @@ import { openDialog,
   type Tab,
   type TableView as View,
 } from "../store";
-import { Button, Dialog, linkButton, Strip, TextInput } from "./dialog";
+import { Button, Checkbox, Dialog, Field, linkButton, Strip, TextInput } from "./dialog";
 import { errorText, Spinner } from "./Results";
 import { Loading, LoadError, qualifiedName } from "./TableView";
-import { NOT_BUILT, Tag } from "./ui";
+import { Tag } from "./ui";
 import { t, tn } from "../i18n";
 
 const dash = <span className="text-text-3">—</span>;
@@ -76,6 +77,11 @@ export function StructureView({ tab, view, conn, isView }: { tab: Tab; view: Vie
   const current = tabs.find((x) => x.id === view.subTab) ?? tabs[0];
   // Set when "Add column" is pressed: the Columns list opens a new row for it.
   const [adding, setAdding] = useState<number | null>(null);
+  const [form, setForm] = useState<"index" | "foreign_key" | null>(null);
+  const driver = conn?.driver.id ?? "postgres";
+  // SQLite and DuckDB declare foreign keys only when a table is created.
+  const noKeys = driver === "sqlite" || driver === "duckdb";
+  const addEdit = (change: ColumnChange) => setColumnEdits(tab.id, [...view.columnEdits, change]);
 
   return (
     <div className="grid min-h-0 grid-rows-[34px_minmax(0,1fr)]">
@@ -99,10 +105,10 @@ export function StructureView({ tab, view, conn, isView }: { tab: Tab; view: Vie
         {current.add && (
           <button
             type="button"
-            disabled={current.id !== "columns" || !data || isView || noAlter || view.structureApply.state === "running"}
-            title={current.id !== "columns" ? t(NOT_BUILT) : noAlter ? t("Changing columns is not built for {engine} yet.", { engine: conn?.driver.name ?? "" }) : undefined}
+            disabled={!data || isView || noAlter || view.structureApply.state === "running" || (current.id === "foreign_keys" && noKeys)}
+            title={noAlter ? t("Changing columns is not built for {engine} yet.", { engine: conn?.driver.name ?? "" }) : current.id === "foreign_keys" && noKeys ? t("{engine} adds a foreign key only when the table is created.", { engine: conn?.driver.name ?? "" }) : undefined}
             className="ml-auto flex items-center gap-[5px] text-[12.5px] text-accent-text hover:underline disabled:cursor-not-allowed disabled:no-underline disabled:opacity-45"
-            onClick={() => setAdding(Date.now())}
+            onClick={() => (current.id === "columns" ? setAdding(Date.now()) : setForm(current.id === "indexes" ? "index" : "foreign_key"))}
           >
             <Plus size={13} />
             {current.add}
@@ -118,15 +124,236 @@ export function StructureView({ tab, view, conn, isView }: { tab: Tab; view: Vie
         <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]">
         <div className="min-h-0 overflow-auto">
           {current.id === "columns" && <Columns tab={tab} view={view} data={state.data} isView={isView} driver={conn?.driver.id ?? "postgres"} adding={adding} onAdded={() => setAdding(null)} />}
-          {current.id === "indexes" && <Indexes data={state.data} />}
-          {current.id === "foreign_keys" && <ForeignKeys data={state.data} view={view} conn={conn} />}
-          {current.id === "triggers" && <Triggers data={state.data} />}
+          {current.id === "indexes" && <Indexes tab={tab} view={view} data={state.data} editable={!noAlter} />}
+          {current.id === "foreign_keys" && <ForeignKeys tab={tab} data={state.data} view={view} conn={conn} editable={!noAlter && !noKeys} />}
+          {current.id === "triggers" && <Triggers tab={tab} view={view} data={state.data} editable={!noAlter && driver !== "duckdb"} />}
           {current.id === "ddl" && <Ddl data={state.data} conn={conn} isView={isView} />}
         </div>
-        {current.id === "columns" && <StructureBar tab={tab} view={view} />}
+        {current.id !== "ddl" && <StructureBar tab={tab} view={view} />}
         </div>
       )}
+      {form === "index" && data && <IndexForm view={view} data={data} pending={view.columnEdits} onAdd={addEdit} onClose={() => setForm(null)} />}
+      {form === "foreign_key" && data && conn && <ForeignKeyForm view={view} conn={conn} data={data} onAdd={addEdit} onClose={() => setForm(null)} />}
     </div>
+  );
+}
+
+/** Marks an existing index, key or trigger to be dropped, or takes the mark back. */
+function DropToggle({ tab, view, change, label }: { tab: Tab; view: View; change: ColumnChange & { name: string }; label: string }) {
+  const edits = view.columnEdits;
+  const index = edits.findIndex((e) => e.kind === change.kind && "name" in e && e.name === change.name);
+  const marked = index >= 0;
+  return (
+    <button
+      type="button"
+      title={marked ? t("Keep {name}", { name: change.name }) : t("Drop {name}", { name: change.name })}
+      aria-label={marked ? t("Keep {name}", { name: change.name }) : label}
+      className={`flex size-[22px] flex-none items-center justify-center hover:bg-hover ${marked ? "text-accent-text" : "text-text-3 hover:text-danger"}`}
+      onClick={() => setColumnEdits(tab.id, marked ? edits.filter((_, i) => i !== index) : [...edits, change])}
+    >
+      {marked ? <Undo2 size={13} /> : <Trash2 size={13} />}
+    </button>
+  );
+}
+
+/** A pending addition, shown above the existing rows with a way to take it back. */
+function RemoveAdded({ tab, view, change }: { tab: Tab; view: View; change: ColumnChange }) {
+  return (
+    <button type="button" title={t("Remove this change")} aria-label={t("Remove this change")} className="flex size-[22px] flex-none items-center justify-center text-text-3 hover:bg-hover hover:text-text" onClick={() => setColumnEdits(tab.id, view.columnEdits.filter((e) => e !== change))}>
+      <X size={13} />
+    </button>
+  );
+}
+
+const ACTIONS = ["", "CASCADE", "SET NULL", "SET DEFAULT", "RESTRICT", "NO ACTION"];
+const select = "h-[28px] min-w-0 border border-line bg-panel px-[6px] font-mono text-[12.5px] focus:border-accent focus:outline-none";
+
+// Not drawn in the design: the index form, in the pending flow of S02.
+function IndexForm({ view, data, pending, onAdd, onClose }: { view: View; data: TableStructure; pending: ColumnChange[]; onAdd(change: ColumnChange): void; onClose(): void }) {
+  const [keys, setKeys] = useState<{ name: string; descending: boolean }[]>([]);
+  const [unique, setUnique] = useState(false);
+  const [name, setName] = useState("");
+  const suggested = `${view.name}_${keys.map((k) => k.name).join("_") || "idx"}${unique ? "_key" : "_idx"}`;
+  const finalName = name.trim() || suggested;
+  const taken = data.indexes.some((i) => i.name === finalName) || pending.some((e) => e.kind === "add_index" && e.name === finalName);
+  const columns = data.columns.map((c) => c.name);
+  return (
+    <Dialog
+      title={t("Add index to {table}", { table: qualifiedName(view) })}
+      width={520}
+      onClose={onClose}
+      onSubmit={() => {
+        if (keys.length === 0 || taken) return;
+        onAdd({ kind: "add_index", name: finalName, columns: keys, unique });
+        onClose();
+      }}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            {t("Cancel")}
+          </Button>
+          <Button type="submit" variant="primary" disabled={keys.length === 0 || taken}>
+            {t("Add index")}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-s3">
+        <Field label={t("Name")} error={taken ? t("An index of this name exists.") : undefined}>
+          <TextInput mono value={name} placeholder={suggested} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <Field label={t("Columns")} helper={t("In key order: the order you tick them in.")}>
+          <div className="flex max-h-[220px] flex-col overflow-auto border border-line">
+            {columns.map((column) => {
+              const at = keys.findIndex((k) => k.name === column);
+              return (
+                <div key={column} className="flex h-[30px] items-center gap-s3 border-b border-line-2 px-s2 last:border-b-0">
+                  <Checkbox checked={at >= 0} onChange={(on) => setKeys(on ? [...keys, { name: column, descending: false }] : keys.filter((k) => k.name !== column))}>
+                    <span className="font-mono text-[12.5px]">{column}</span>
+                  </Checkbox>
+                  {at >= 0 && (
+                    <>
+                      <span className="font-mono text-[11px] text-text-3">#{at + 1}</span>
+                      <button type="button" className="ml-auto h-[22px] border border-line px-s2 font-mono text-[11px] hover:bg-hover" onClick={() => setKeys(keys.map((k, i) => (i === at ? { ...k, descending: !k.descending } : k)))}>
+                        {keys[at].descending ? "DESC" : "ASC"}
+                      </button>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </Field>
+        <Checkbox checked={unique} onChange={setUnique}>
+          {t("Unique: no two rows may have the same values")}
+        </Checkbox>
+      </div>
+    </Dialog>
+  );
+}
+
+// Not drawn in the design: the foreign key form, in the pending flow of S02.
+function ForeignKeyForm({ view, conn, data, onAdd, onClose }: { view: View; conn: Conn; data: TableStructure; onAdd(change: ColumnChange): void; onClose(): void }) {
+  const tables = (conn.objects[view.namespace] ?? []).filter((o) => o.kind === "table").map((o) => o.name);
+  const [refTable, setRefTable] = useState(tables.find((name) => name !== view.name) ?? view.name);
+  const [refColumns, setRefColumns] = useState<string[] | { error: string } | null>(null);
+  const [pairs, setPairs] = useState<{ column: string; ref: string }[]>([{ column: data.columns[0]?.name ?? "", ref: "" }]);
+  const [onDelete, setOnDelete] = useState("");
+  const [onUpdate, setOnUpdate] = useState("");
+  const [name, setName] = useState("");
+  useEffect(() => {
+    if (conn.session === null) return;
+    setRefColumns(null);
+    let live = true;
+    api.describeObject(conn.session, refTable, view.namespace || undefined).then(
+      (d) => {
+        if (!live) return;
+        const names = d.columns.map((c) => c.name);
+        setRefColumns(names);
+        // The referenced table's key is the usual target.
+        const key = d.columns.find((c) => c.primary_key)?.name ?? names[0] ?? "";
+        setPairs((p) => p.map((pair, i) => ({ ...pair, ref: i === 0 ? key : "" })));
+      },
+      (e) => live && setRefColumns({ error: errorMessage(e) }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [conn.session, refTable, view.namespace]);
+  const suggested = `${view.name}_${pairs.map((p) => p.column).join("_")}_fkey`;
+  const ready = Array.isArray(refColumns) && pairs.every((p) => p.column && p.ref);
+  return (
+    <Dialog
+      title={t("Add foreign key to {table}", { table: qualifiedName(view) })}
+      width={600}
+      onClose={onClose}
+      onSubmit={() => {
+        if (!ready) return;
+        onAdd({ kind: "add_foreign_key", name: name.trim() || suggested, columns: pairs.map((p) => p.column), ref_table: refTable, ref_columns: pairs.map((p) => p.ref), on_delete: onDelete || null, on_update: onUpdate || null });
+        onClose();
+      }}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            {t("Cancel")}
+          </Button>
+          <Button type="submit" variant="primary" disabled={!ready}>
+            {t("Add foreign key")}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-s3">
+        <Field label={t("Name")}>
+          <TextInput mono value={name} placeholder={suggested} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <Field label={t("References")}>
+          <select aria-label={t("References")} className={select} value={refTable} onChange={(e) => setRefTable(e.target.value)}>
+            {tables.map((table) => (
+              <option key={table} value={table}>
+                {[view.namespace, table].filter(Boolean).join(".")}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label={t("Columns")} helper={t("Each column of this table and the column it points to.")}>
+          <div className="flex flex-col gap-s2">
+            {pairs.map((pair, i) => (
+              <div key={i} className="grid grid-cols-[minmax(0,1fr)_20px_minmax(0,1fr)_24px] items-center gap-s2">
+                <select aria-label={t("Column")} className={select} value={pair.column} onChange={(e) => setPairs(pairs.map((p, j) => (j === i ? { ...p, column: e.target.value } : p)))}>
+                  {data.columns.map((c) => (
+                    <option key={c.name} value={c.name}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-center text-text-3">→</span>
+                {Array.isArray(refColumns) ? (
+                  <select aria-label={t("Referenced column")} className={select} value={pair.ref} onChange={(e) => setPairs(pairs.map((p, j) => (j === i ? { ...p, ref: e.target.value } : p)))}>
+                    <option value="" />
+                    {refColumns.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="text-[12px] text-text-3">{refColumns === null ? t("Loading…") : refColumns.error}</span>
+                )}
+                {pairs.length > 1 ? (
+                  <button type="button" aria-label={t("Remove this pair")} className="flex size-[22px] items-center justify-center text-text-3 hover:bg-hover" onClick={() => setPairs(pairs.filter((_, j) => j !== i))}>
+                    <X size={13} />
+                  </button>
+                ) : (
+                  <span />
+                )}
+              </div>
+            ))}
+            <button type="button" className={`${linkButton} self-start text-[12.5px]`} onClick={() => setPairs([...pairs, { column: data.columns[0]?.name ?? "", ref: "" }])}>
+              {t("Add a column pair")}
+            </button>
+          </div>
+        </Field>
+        <div className="grid grid-cols-2 gap-s3">
+          {(
+            [
+              ["ON DELETE", onDelete, setOnDelete],
+              ["ON UPDATE", onUpdate, setOnUpdate],
+            ] as const
+          ).map(([label, value, set]) => (
+            <Field key={label} label={label}>
+              <select aria-label={label} className={select} value={value} onChange={(e) => set(e.target.value)}>
+                {ACTIONS.map((a) => (
+                  <option key={a} value={a}>
+                    {a || t("The database's default")}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          ))}
+        </div>
+      </div>
+    </Dialog>
   );
 }
 
@@ -362,7 +589,7 @@ function StructureBar({ tab, view }: { tab: Tab; view: View }) {
   const edits = view.columnEdits;
   const apply = view.structureApply;
   const ghost = "flex h-[26px] flex-none items-center gap-[6px] px-s2 text-[12.5px] whitespace-nowrap enabled:hover:bg-hover disabled:cursor-not-allowed disabled:opacity-45";
-  const count = (kind: ColumnChange["kind"]) => edits.filter((e) => e.kind === kind).length;
+  const count = (kind: "add" | "modify" | "drop") => edits.filter((e) => (kind === "add" ? e.kind.startsWith("add") : kind === "drop" ? e.kind.startsWith("drop") : e.kind === kind)).length;
 
   useEffect(() => {
     if (apply.state !== "ok") return;
@@ -442,7 +669,7 @@ export function AlterDialog({ tab, view, conn, statements }: { tab: Tab; view: V
   const production = conn.environment === "production";
   const [typed, setTyped] = useState("");
   const edits = view.columnEdits;
-  const dataLoss = edits.some((e) => e.kind === "drop" || (e.kind === "modify" && e.from.type_name.trim() !== e.to.type_name.trim()));
+  const dataLoss = edits.some((e) => e.kind.startsWith("drop") || (e.kind === "modify" && e.from.type_name.trim() !== e.to.type_name.trim()));
   const transactional = conn.driver.id !== "mysql";
   const allowed = !production || typed === conn.name;
   const apply = () => {
@@ -450,7 +677,7 @@ export function AlterDialog({ tab, view, conn, statements }: { tab: Tab; view: V
     openDialog(null);
     void applyStructureChanges(tab.id);
   };
-  const look = (statement: string) => (/\bDROP COLUMN\b/i.test(statement) ? { mark: "−", colour: "text-danger", tint: "bg-danger-tint" } : /\bADD COLUMN\b/i.test(statement) ? { mark: "+", colour: "text-ok", tint: "bg-ok-tint" } : { mark: "~", colour: "text-accent-text", tint: "bg-accent-tint" });
+  const look = (statement: string) => (/\bDROP (COLUMN|INDEX|CONSTRAINT|FOREIGN KEY|TRIGGER)\b/i.test(statement) ? { mark: "−", colour: "text-danger", tint: "bg-danger-tint" } : /\bADD COLUMN\b|^ALTER TABLE \S+ ADD \[|^CREATE (UNIQUE )?INDEX\b|\bADD CONSTRAINT\b/i.test(statement) ? { mark: "+", colour: "text-ok", tint: "bg-ok-tint" } : { mark: "~", colour: "text-accent-text", tint: "bg-accent-tint" });
   return (
     <Dialog
       alert={production || dataLoss}
@@ -490,7 +717,7 @@ export function AlterDialog({ tab, view, conn, statements }: { tab: Tab; view: V
         </div>
         {dataLoss && (
           <Strip kind="error" icon={<TriangleAlert size={13} />}>
-            {t("Dropping a column or changing its type can lose data. Values that do not fit the new type make the statement fail.")}
+            {t("Dropping a column, an index, a key or a trigger, or changing a column's type, can lose data or the checks on it. Values that do not fit a new type make the statement fail.")}
           </Strip>
         )}
         <Strip kind={transactional ? "neutral" : "warning"} icon={transactional ? undefined : <TriangleAlert size={13} />}>
@@ -507,72 +734,125 @@ export function AlterDialog({ tab, view, conn, statements }: { tab: Tab; view: V
   );
 }
 
-function Indexes({ data }: { data: TableStructure }) {
-  if (data.indexes.length === 0) return <Nothing>{t("This table has no indexes.")}</Nothing>;
+function Indexes({ tab, view, data, editable }: { tab: Tab; view: View; data: TableStructure; editable: boolean }) {
+  const added = view.columnEdits.filter((e): e is Extract<ColumnChange, { kind: "add_index" }> => e.kind === "add_index");
+  const dropped = (name: string) => view.columnEdits.some((e) => e.kind === "drop_index" && e.name === name);
+  if (data.indexes.length === 0 && added.length === 0) return <Nothing>{t("This table has no indexes.")}</Nothing>;
   return (
     <>
-      <List label={t("Indexes")} columns="240px minmax(200px,1.4fr) 150px 110px 110px minmax(120px,1fr)" headers={[t("Name"), t("Columns"), t("Unique"), t("Method"), t("Size"), t("Condition")]}>
-        {data.indexes.map((index) => (
-          <Row key={index.name}>
-            <Cell className="font-medium">
+      <List label={t("Indexes")} columns="240px minmax(200px,1.4fr) 150px 110px 110px minmax(120px,1fr) 34px" headers={[t("Name"), t("Columns"), t("Unique"), t("Method"), t("Size"), t("Condition"), ""]}>
+        {added.map((index) => (
+          <Row key={`+${index.name}`}>
+            <Cell className="gap-[6px] bg-ok-tint font-medium">
+              <span className="text-ok">+</span>
               <span className={`selectable ${clip}`}>{index.name}</span>
             </Cell>
-            <Cell title={index.columns.join(", ")}>
-              <span className={`selectable ${clip}`}>{index.columns.join(", ")}</span>
+            <Cell className="bg-ok-tint">
+              <span className={clip}>{index.columns.map((c) => c.name + (c.descending ? " DESC" : "")).join(", ")}</span>
             </Cell>
-            <Cell className="gap-[6px] font-body text-[12.5px]">
-              {index.primary ? (
-                <>
-                  <KeyRound size={11} className="flex-none text-accent-text" />
-                  {t("Primary key")}
-                </>
-              ) : index.unique ? (
-                t("Unique")
-              ) : (
-                dash
-              )}
+            <Cell className="bg-ok-tint font-body text-[12.5px]">{index.unique ? t("Unique") : dash}</Cell>
+            <Cell className="bg-ok-tint">{dash}</Cell>
+            <Cell className="bg-ok-tint">{dash}</Cell>
+            <Cell className="bg-ok-tint">{dash}</Cell>
+            <Cell className="bg-ok-tint px-[4px]">
+              <RemoveAdded tab={tab} view={view} change={index} />
             </Cell>
-            <Cell>{index.method ?? dash}</Cell>
-            <Cell className="justify-end">{index.size ?? dash}</Cell>
-            <Cell title={index.condition ?? undefined}>{index.condition ? <span className={`selectable ${clip}`}>{index.condition}</span> : dash}</Cell>
           </Row>
         ))}
+        {data.indexes.map((index) => {
+          const gone = dropped(index.name);
+          const tint = gone ? "bg-danger-tint text-text-3 line-through" : "";
+          return (
+            <Row key={index.name}>
+              <Cell className={`font-medium ${tint}`}>
+                <span className={`selectable ${clip}`}>{index.name}</span>
+              </Cell>
+              <Cell title={index.columns.join(", ")} className={tint}>
+                <span className={`selectable ${clip}`}>{index.columns.join(", ")}</span>
+              </Cell>
+              <Cell className={`gap-[6px] font-body text-[12.5px] ${tint}`}>
+                {index.primary ? (
+                  <>
+                    <KeyRound size={11} className="flex-none text-accent-text" />
+                    {t("Primary key")}
+                  </>
+                ) : index.unique ? (
+                  t("Unique")
+                ) : (
+                  dash
+                )}
+              </Cell>
+              <Cell className={tint}>{index.method ?? dash}</Cell>
+              <Cell className={`justify-end ${tint}`}>{index.size ?? dash}</Cell>
+              <Cell title={index.condition ?? undefined} className={tint}>{index.condition ? <span className={`selectable ${clip}`}>{index.condition}</span> : dash}</Cell>
+              {/* The primary key's index goes with the key, not on its own. */}
+              <Cell className={`px-[4px] ${gone ? "bg-danger-tint" : ""}`}>{editable && !index.primary ? <DropToggle tab={tab} view={view} change={{ kind: "drop_index", name: index.name }} label={t("Drop index {name}", { name: index.name })} /> : null}</Cell>
+            </Row>
+          );
+        })}
       </List>
       {data.indexes.some((index) => index.size) && <p className="px-[10px] py-s2 text-[12px] text-text-3">{t("Sizes come from the server and are approximate.")}</p>}
     </>
   );
 }
 
-function ForeignKeys({ data, view, conn }: { data: TableStructure; view: View; conn: Conn | null }) {
+function ForeignKeys({ tab, data, view, conn, editable }: { tab: Tab; data: TableStructure; view: View; conn: Conn | null; editable: boolean }) {
   const incoming = data.referenced_by ?? [];
-  if (data.foreign_keys.length === 0 && incoming.length === 0) return <Nothing>{t("This table has no foreign keys.")}</Nothing>;
+  const added = view.columnEdits.filter((e): e is Extract<ColumnChange, { kind: "add_foreign_key" }> => e.kind === "add_foreign_key");
+  const dropped = (name: string | null) => !!name && view.columnEdits.some((e) => e.kind === "drop_foreign_key" && e.name === name);
+  if (data.foreign_keys.length === 0 && incoming.length === 0 && added.length === 0) return <Nothing>{t("This table has no foreign keys.")}</Nothing>;
   return (
     <>
-      {data.foreign_keys.length === 0 ? (
+      {data.foreign_keys.length === 0 && added.length === 0 ? (
         <Nothing>{t("This table has no foreign keys.")}</Nothing>
       ) : (
-        <List label={t("Foreign keys")} columns="240px minmax(140px,1fr) minmax(200px,1.4fr) 120px 120px 170px" headers={[t("Name"), t("Columns"), t("References"), "ON DELETE", "ON UPDATE", ""]}>
+        <List label={t("Foreign keys")} columns="240px minmax(140px,1fr) minmax(200px,1.4fr) 120px 120px 170px 34px" headers={[t("Name"), t("Columns"), t("References"), "ON DELETE", "ON UPDATE", "", ""]}>
+          {added.map((key) => (
+            <Row key={`+${key.name}`}>
+              <Cell className="gap-[6px] bg-ok-tint font-medium">
+                <span className="text-ok">+</span>
+                <span className={`selectable ${clip}`}>{key.name}</span>
+              </Cell>
+              <Cell className="bg-ok-tint">
+                <span className={clip}>{key.columns.join(", ")}</span>
+              </Cell>
+              <Cell className="bg-ok-tint">
+                <span className={clip}>
+                  {[key.ref_namespace ?? view.namespace, key.ref_table].filter(Boolean).join(".")} ({key.ref_columns.join(", ")})
+                </span>
+              </Cell>
+              <Cell className="bg-ok-tint">{key.on_delete ?? dash}</Cell>
+              <Cell className="bg-ok-tint">{key.on_update ?? dash}</Cell>
+              <Cell className="bg-ok-tint">{dash}</Cell>
+              <Cell className="bg-ok-tint px-[4px]">
+                <RemoveAdded tab={tab} view={view} change={key} />
+              </Cell>
+            </Row>
+          ))}
           {data.foreign_keys.map((key, i) => {
             const open = () => conn && openTable(conn.id, key.referenced_namespace ?? view.namespace, key.referenced_table, "structure");
+            const gone = dropped(key.name);
+            const tint = gone ? "bg-danger-tint text-text-3 line-through" : "";
             return (
               <Row key={key.name ?? i}>
-                <Cell className="font-medium">{key.name ? <span className={`selectable ${clip}`}>{key.name}</span> : dash}</Cell>
-                <Cell>
+                <Cell className={`font-medium ${tint}`}>{key.name ? <span className={`selectable ${clip}`}>{key.name}</span> : dash}</Cell>
+                <Cell className={tint}>
                   <span className={`selectable ${clip}`}>{key.columns.join(", ")}</span>
                 </Cell>
-                <Cell className="gap-[6px]">
+                <Cell className={`gap-[6px] ${tint}`}>
                   <button type="button" className={`${linkButton} ${clip}`} onClick={open}>
                     {target(key)}
                   </button>
                   {key.referenced_columns.length > 0 && <span className={`${clip} text-text-2`}>({key.referenced_columns.join(", ")})</span>}
                 </Cell>
-                <Cell>{key.on_delete ?? dash}</Cell>
-                <Cell>{key.on_update ?? dash}</Cell>
-                <Cell className="font-body text-[12.5px]">
+                <Cell className={tint}>{key.on_delete ?? dash}</Cell>
+                <Cell className={tint}>{key.on_update ?? dash}</Cell>
+                <Cell className={`font-body text-[12.5px] ${gone ? "bg-danger-tint" : ""}`}>
                   <button type="button" className={`${linkButton} ${clip}`} onClick={open}>
                     {t("Open {table}", { table: key.referenced_table })}
                   </button>
                 </Cell>
+                <Cell className={`px-[4px] ${gone ? "bg-danger-tint" : ""}`}>{editable && key.name ? <DropToggle tab={tab} view={view} change={{ kind: "drop_foreign_key", name: key.name }} label={t("Drop foreign key {name}", { name: key.name })} /> : null}</Cell>
               </Row>
             );
           })}
@@ -610,20 +890,25 @@ function ForeignKeys({ data, view, conn }: { data: TableStructure; view: View; c
   );
 }
 
-function Triggers({ data }: { data: TableStructure }) {
+function Triggers({ tab, view, data, editable }: { tab: Tab; view: View; data: TableStructure; editable: boolean }) {
   if (data.triggers.length === 0) return <Nothing>{t("This table has no triggers.")}</Nothing>;
   return (
-    <List label={t("Triggers")} columns="240px 200px 160px minmax(240px,1fr)" headers={[t("Name"), t("Event"), t("Timing"), t("Definition")]}>
-      {data.triggers.map((trigger) => (
-        <Row key={trigger.name}>
-          <Cell className="font-medium">
-            <span className={`selectable ${clip}`}>{trigger.name}</span>
-          </Cell>
-          <Cell>{trigger.events.length > 0 ? trigger.events.join(" OR ") : dash}</Cell>
-          <Cell>{trigger.timing ?? dash}</Cell>
-          <Cell title={trigger.definition ?? undefined}>{trigger.definition ? <span className={`selectable ${clip}`}>{trigger.definition}</span> : dash}</Cell>
-        </Row>
-      ))}
+    <List label={t("Triggers")} columns="240px 200px 160px minmax(240px,1fr) 34px" headers={[t("Name"), t("Event"), t("Timing"), t("Definition"), ""]}>
+      {data.triggers.map((trigger) => {
+        const gone = view.columnEdits.some((e) => e.kind === "drop_trigger" && e.name === trigger.name);
+        const tint = gone ? "bg-danger-tint text-text-3 line-through" : "";
+        return (
+          <Row key={trigger.name}>
+            <Cell className={`font-medium ${tint}`}>
+              <span className={`selectable ${clip}`}>{trigger.name}</span>
+            </Cell>
+            <Cell className={tint}>{trigger.events.length > 0 ? trigger.events.join(" OR ") : dash}</Cell>
+            <Cell className={tint}>{trigger.timing ?? dash}</Cell>
+            <Cell title={trigger.definition ?? undefined} className={tint}>{trigger.definition ? <span className={`selectable ${clip}`}>{trigger.definition}</span> : dash}</Cell>
+            <Cell className={`px-[4px] ${gone ? "bg-danger-tint" : ""}`}>{editable ? <DropToggle tab={tab} view={view} change={{ kind: "drop_trigger", name: trigger.name }} label={t("Drop trigger {name}", { name: trigger.name })} /> : null}</Cell>
+          </Row>
+        );
+      })}
     </List>
   );
 }

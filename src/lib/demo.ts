@@ -212,7 +212,21 @@ export const demoBackend: Backend = {
   }),
   previewStructure: async (_session, set) =>
     set.changes.map((c) =>
-      c.kind === "add" ? `ALTER TABLE public.${set.table} ADD COLUMN ${c.column.name} ${c.column.type_name}${c.column.nullable ? "" : " NOT NULL"}` : c.kind === "drop" ? `ALTER TABLE public.${set.table} DROP COLUMN ${c.column}` : `ALTER TABLE public.${set.table} ALTER COLUMN ${c.from.name} TYPE ${c.to.type_name}`,
+      c.kind === "add"
+        ? `ALTER TABLE public.${set.table} ADD COLUMN ${c.column.name} ${c.column.type_name}${c.column.nullable ? "" : " NOT NULL"}`
+        : c.kind === "drop"
+          ? `ALTER TABLE public.${set.table} DROP COLUMN ${c.column}`
+          : c.kind === "modify"
+            ? `ALTER TABLE public.${set.table} ALTER COLUMN ${c.from.name} TYPE ${c.to.type_name}`
+            : c.kind === "add_index"
+              ? `CREATE ${c.unique ? "UNIQUE " : ""}INDEX ${c.name} ON public.${set.table} (${c.columns.map((k) => k.name + (k.descending ? " DESC" : "")).join(", ")})`
+              : c.kind === "add_foreign_key"
+                ? `ALTER TABLE public.${set.table} ADD CONSTRAINT ${c.name} FOREIGN KEY (${c.columns.join(", ")}) REFERENCES public.${c.ref_table} (${c.ref_columns.join(", ")})`
+                : c.kind === "drop_index"
+                  ? `DROP INDEX public.${c.name}`
+                  : c.kind === "drop_foreign_key"
+                    ? `ALTER TABLE public.${set.table} DROP CONSTRAINT ${c.name}`
+                    : `DROP TRIGGER ${c.name} ON public.${set.table}`,
     ),
   applyStructure: async (_session, set) => {
     await wait(300);

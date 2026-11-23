@@ -199,7 +199,15 @@ export interface ColumnDef {
   default_value?: string | null;
 }
 
-export type ColumnChange = { kind: "add"; column: ColumnDef } | { kind: "modify"; from: ColumnDef; to: ColumnDef } | { kind: "drop"; column: string };
+export type ColumnChange =
+  | { kind: "add"; column: ColumnDef }
+  | { kind: "modify"; from: ColumnDef; to: ColumnDef }
+  | { kind: "drop"; column: string }
+  | { kind: "add_index"; name: string; columns: { name: string; descending: boolean }[]; unique: boolean }
+  | { kind: "drop_index"; name: string }
+  | { kind: "add_foreign_key"; name: string; columns: string[]; ref_namespace?: string | null; ref_table: string; ref_columns: string[]; on_delete?: string | null; on_update?: string | null }
+  | { kind: "drop_foreign_key"; name: string }
+  | { kind: "drop_trigger"; name: string };
 
 export interface StructureChangeSet {
   namespace?: string;

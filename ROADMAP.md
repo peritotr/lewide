@@ -41,7 +41,7 @@ before every write), English and Turkish, light and dark themes.
 
 **Finishing what exists**
 
-- Changing columns on ClickHouse; editing indexes, foreign keys and triggers everywhere
+- Changing columns on ClickHouse; creating and editing triggers
 - Text search for vector databases through an embedding provider
 - Excel import and export
 - Structured AI findings (review results shown in place, not only as text)

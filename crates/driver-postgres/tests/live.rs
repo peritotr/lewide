@@ -920,6 +920,7 @@ async fn alters_columns() {
         async move {
             let sql = statements(
                 conn.dialect(),
+                Some("t_alter"),
                 &conn.qualified(Some("t_alter"), "items"),
                 &changes,
             )?;
@@ -1145,4 +1146,119 @@ async fn timescaledb_hypertables_read_like_tables() {
     conn.execute(query("DROP SCHEMA t_ts CASCADE", None))
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn adds_and_drops_indexes_keys_and_triggers() {
+    use dbclient_core::structure::{ColumnChange, IndexColumn, apply_on, statements};
+    let conn = connect_or_skip!();
+    conn.execute_all(query(
+        "DROP SCHEMA IF EXISTS t_keys CASCADE; CREATE SCHEMA t_keys; \
+         CREATE TABLE t_keys.users (id integer PRIMARY KEY); \
+         CREATE TABLE t_keys.orders (id integer PRIMARY KEY, user_id integer, created integer); \
+         CREATE FUNCTION t_keys.noop() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NEW; END$$; \
+         CREATE TRIGGER audit BEFORE INSERT ON t_keys.orders FOR EACH ROW EXECUTE FUNCTION t_keys.noop()",
+        None,
+    ))
+    .await
+    .unwrap();
+    let run = |changes: Vec<ColumnChange>| {
+        let conn = &conn;
+        async move {
+            let sql = statements(
+                conn.dialect(),
+                Some("t_keys"),
+                &conn.qualified(Some("t_keys"), "orders"),
+                &changes,
+            )?;
+            apply_on(conn.as_ref(), sql).await
+        }
+    };
+    run(vec![
+        ColumnChange::AddForeignKey {
+            name: "orders_user".into(),
+            columns: vec!["user_id".into()],
+            ref_namespace: None,
+            ref_table: "users".into(),
+            ref_columns: vec!["id".into()],
+            on_delete: Some("CASCADE".into()),
+            on_update: None,
+        },
+        ColumnChange::AddIndex {
+            name: "orders_by_user".into(),
+            columns: vec![
+                IndexColumn {
+                    name: "user_id".into(),
+                    descending: false,
+                },
+                IndexColumn {
+                    name: "created".into(),
+                    descending: true,
+                },
+            ],
+            unique: false,
+        },
+    ])
+    .await
+    .unwrap();
+    let structure = conn
+        .table_structure(Some("t_keys"), "orders")
+        .await
+        .unwrap();
+    let index = structure
+        .indexes
+        .iter()
+        .find(|i| i.name == "orders_by_user")
+        .expect("the new index");
+    assert_eq!(index.columns, ["user_id", "created DESC"]);
+    let key = structure
+        .foreign_keys
+        .iter()
+        .find(|k| k.name.as_deref() == Some("orders_user"))
+        .expect("the new key");
+    assert_eq!(key.columns, ["user_id"]);
+    assert_eq!(structure.triggers.len(), 1);
+
+    run(vec![
+        ColumnChange::DropForeignKey {
+            name: "orders_user".into(),
+        },
+        ColumnChange::DropIndex {
+            name: "orders_by_user".into(),
+        },
+        ColumnChange::DropTrigger {
+            name: "audit".into(),
+        },
+    ])
+    .await
+    .unwrap();
+    let structure = conn
+        .table_structure(Some("t_keys"), "orders")
+        .await
+        .unwrap();
+    assert!(structure.indexes.iter().all(|i| i.name != "orders_by_user"));
+    assert!(structure.foreign_keys.is_empty());
+    assert!(structure.triggers.is_empty());
+
+    // A failing statement leaves nothing half done: PostgreSQL undoes the batch.
+    let failed = run(vec![
+        ColumnChange::AddIndex {
+            name: "ok_index".into(),
+            columns: vec![IndexColumn {
+                name: "created".into(),
+                descending: false,
+            }],
+            unique: false,
+        },
+        ColumnChange::DropIndex {
+            name: "no_such_index".into(),
+        },
+    ])
+    .await;
+    assert!(failed.is_err());
+    let structure = conn
+        .table_structure(Some("t_keys"), "orders")
+        .await
+        .unwrap();
+    assert!(structure.indexes.iter().all(|i| i.name != "ok_index"));
 }

@@ -1,4 +1,5 @@
-//! Changing a table's columns: the `ALTER TABLE` statements, and applying them.
+//! Changing a table's structure (columns, indexes, foreign keys, triggers):
+//! the statements, and applying them.
 //!
 //! Type names and defaults are SQL the user wrote for their own database, and
 //! go into the statements as they are. The statements are shown before they run.
@@ -33,6 +34,43 @@ pub enum ColumnChange {
     Drop {
         column: String,
     },
+    AddIndex {
+        name: String,
+        /// In key order.
+        columns: Vec<IndexColumn>,
+        #[serde(default)]
+        unique: bool,
+    },
+    DropIndex {
+        name: String,
+    },
+    AddForeignKey {
+        name: String,
+        columns: Vec<String>,
+        /// The referenced table's namespace; `None` for the table's own.
+        #[serde(default)]
+        ref_namespace: Option<String>,
+        ref_table: String,
+        ref_columns: Vec<String>,
+        /// `CASCADE`, `SET NULL`, `SET DEFAULT`, `RESTRICT` or `NO ACTION`.
+        #[serde(default)]
+        on_delete: Option<String>,
+        #[serde(default)]
+        on_update: Option<String>,
+    },
+    DropForeignKey {
+        name: String,
+    },
+    DropTrigger {
+        name: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct IndexColumn {
+    pub name: String,
+    #[serde(default)]
+    pub descending: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -80,8 +118,203 @@ fn definition(dialect: SqlDialect, column: &ColumnDef) -> Result<String> {
     Ok(text)
 }
 
-/// The statements for a change set: drops, then changes to existing columns, then new columns.
+/// The statements for a change set, in an order that cannot trip over itself:
+/// foreign keys, triggers and indexes are dropped first, then columns are
+/// dropped, changed and added, and new indexes and foreign keys come last.
+/// `table` is the table's quoted, qualified name; `namespace` its namespace.
 pub fn statements(
+    dialect: SqlDialect,
+    namespace: Option<&str>,
+    table: &str,
+    changes: &[ColumnChange],
+) -> Result<Vec<String>> {
+    if dialect == SqlDialect::ClickHouse {
+        // Its ALTER TABLE works differently (MODIFY COLUMN, data-skipping indexes, mutations).
+        return Err(Error::Unsupported(
+            "changing the structure is not built for ClickHouse yet",
+        ));
+    }
+    let (columns, others): (Vec<ColumnChange>, Vec<ColumnChange>) =
+        changes.iter().cloned().partition(|c| {
+            matches!(
+                c,
+                ColumnChange::Add { .. } | ColumnChange::Modify { .. } | ColumnChange::Drop { .. }
+            )
+        });
+    let mut out = Vec::new();
+    for change in &others {
+        if !matches!(
+            change,
+            ColumnChange::AddIndex { .. } | ColumnChange::AddForeignKey { .. }
+        ) {
+            out.push(object_statement(dialect, namespace, table, change)?);
+        }
+    }
+    if !columns.is_empty() {
+        out.extend(column_statements(dialect, table, &columns)?);
+    }
+    for change in &others {
+        if matches!(change, ColumnChange::AddIndex { .. }) {
+            out.push(object_statement(dialect, namespace, table, change)?);
+        }
+    }
+    for change in &others {
+        if matches!(change, ColumnChange::AddForeignKey { .. }) {
+            out.push(object_statement(dialect, namespace, table, change)?);
+        }
+    }
+    Ok(out)
+}
+
+/// A name inside the table's namespace: `"ns"."name"`, or the name alone.
+fn in_namespace(dialect: SqlDialect, namespace: Option<&str>, name: &str) -> String {
+    match namespace.filter(|n| !n.is_empty()) {
+        Some(ns) => format!("{}.{}", dialect.quote_ident(ns), dialect.quote_ident(name)),
+        None => dialect.quote_ident(name),
+    }
+}
+
+/// What a foreign key does when the referenced row goes away or changes.
+fn referential_action(action: &Option<String>) -> Result<Option<&'static str>> {
+    let Some(action) = action.as_deref().map(str::trim).filter(|a| !a.is_empty()) else {
+        return Ok(None);
+    };
+    const ACTIONS: [&str; 5] = [
+        "CASCADE",
+        "SET NULL",
+        "SET DEFAULT",
+        "RESTRICT",
+        "NO ACTION",
+    ];
+    let normal = action
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_uppercase();
+    ACTIONS
+        .iter()
+        .find(|a| **a == normal)
+        .copied()
+        .map(Some)
+        .ok_or_else(|| Error::Query(format!("not a referential action: {action}")))
+}
+
+/// One statement for an index, foreign key or trigger change.
+fn object_statement(
+    dialect: SqlDialect,
+    namespace: Option<&str>,
+    table: &str,
+    change: &ColumnChange,
+) -> Result<String> {
+    let quote = |name: &str| dialect.quote_ident(name);
+    let named = |name: &str, what: &str| -> Result<()> {
+        if name.trim().is_empty() {
+            return Err(Error::Query(format!("the {what} needs a name")));
+        }
+        Ok(())
+    };
+    let list = |names: &[String], what: &str| -> Result<String> {
+        if names.is_empty() {
+            return Err(Error::Query(format!("{what} needs at least one column")));
+        }
+        Ok(names
+            .iter()
+            .map(|n| quote(n))
+            .collect::<Vec<_>>()
+            .join(", "))
+    };
+    Ok(match change {
+        ColumnChange::AddIndex {
+            name,
+            columns,
+            unique,
+        } => {
+            named(name, "index")?;
+            if columns.is_empty() {
+                return Err(Error::Query("an index needs at least one column".into()));
+            }
+            let keys = columns
+                .iter()
+                .map(|c| {
+                    format!(
+                        "{}{}",
+                        quote(&c.name),
+                        if c.descending { " DESC" } else { "" }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "CREATE {}INDEX {} ON {table} ({keys})",
+                if *unique { "UNIQUE " } else { "" },
+                quote(name)
+            )
+        }
+        ColumnChange::DropIndex { name } => match dialect {
+            SqlDialect::MySql | SqlDialect::SqlServer => {
+                format!("DROP INDEX {} ON {table}", quote(name))
+            }
+            // An index lives in the schema, not under the table.
+            _ => format!("DROP INDEX {}", in_namespace(dialect, namespace, name)),
+        },
+        ColumnChange::AddForeignKey {
+            name,
+            columns,
+            ref_namespace,
+            ref_table,
+            ref_columns,
+            on_delete,
+            on_update,
+        } => {
+            if matches!(dialect, SqlDialect::Sqlite | SqlDialect::DuckDb) {
+                return Err(Error::Unsupported(
+                    "SQLite and DuckDB add a foreign key only when the table is created",
+                ));
+            }
+            named(name, "foreign key")?;
+            if columns.len() != ref_columns.len() {
+                return Err(Error::Query(
+                    "a foreign key needs as many referenced columns as columns".into(),
+                ));
+            }
+            let target = in_namespace(dialect, ref_namespace.as_deref().or(namespace), ref_table);
+            let mut text = format!(
+                "ALTER TABLE {table} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {target} ({})",
+                quote(name),
+                list(columns, "a foreign key")?,
+                list(ref_columns, "a foreign key")?
+            );
+            if let Some(action) = referential_action(on_delete)? {
+                text.push_str(&format!(" ON DELETE {action}"));
+            }
+            if let Some(action) = referential_action(on_update)? {
+                text.push_str(&format!(" ON UPDATE {action}"));
+            }
+            text
+        }
+        ColumnChange::DropForeignKey { name } => match dialect {
+            SqlDialect::MySql => format!("ALTER TABLE {table} DROP FOREIGN KEY {}", quote(name)),
+            SqlDialect::Sqlite | SqlDialect::DuckDb => {
+                return Err(Error::Unsupported(
+                    "SQLite and DuckDB drop a foreign key only by creating the table again",
+                ));
+            }
+            _ => format!("ALTER TABLE {table} DROP CONSTRAINT {}", quote(name)),
+        },
+        ColumnChange::DropTrigger { name } => match dialect {
+            SqlDialect::Postgres => format!("DROP TRIGGER {} ON {table}", quote(name)),
+            SqlDialect::Sqlite => format!("DROP TRIGGER {}", quote(name)),
+            SqlDialect::DuckDb => return Err(Error::Unsupported("DuckDB has no triggers")),
+            _ => format!("DROP TRIGGER {}", in_namespace(dialect, namespace, name)),
+        },
+        ColumnChange::Add { .. } | ColumnChange::Modify { .. } | ColumnChange::Drop { .. } => {
+            unreachable!("column changes are built elsewhere")
+        }
+    })
+}
+
+/// The statements for column changes: drops, then changes to existing columns, then new columns.
+fn column_statements(
     dialect: SqlDialect,
     table: &str,
     changes: &[ColumnChange],
@@ -353,7 +586,7 @@ mod tests {
     }
 
     fn sql(dialect: SqlDialect, table: &str, changes: Vec<ColumnChange>) -> Vec<String> {
-        statements(dialect, table, &set(changes).changes).unwrap()
+        statements(dialect, None, table, &set(changes).changes).unwrap()
     }
 
     #[test]
@@ -373,6 +606,139 @@ mod tests {
                 "ALTER TABLE \"shop\".\"orders\" ALTER COLUMN \"remark\" SET NOT NULL",
             ]
         );
+    }
+
+    #[test]
+    fn indexes_keys_and_triggers_per_dialect() {
+        let index = ColumnChange::AddIndex {
+            name: "by_user".into(),
+            columns: vec![
+                IndexColumn {
+                    name: "user_id".into(),
+                    descending: false,
+                },
+                IndexColumn {
+                    name: "created_at".into(),
+                    descending: true,
+                },
+            ],
+            unique: true,
+        };
+        let key = ColumnChange::AddForeignKey {
+            name: "orders_user".into(),
+            columns: vec!["user_id".into()],
+            ref_namespace: None,
+            ref_table: "users".into(),
+            ref_columns: vec!["id".into()],
+            on_delete: Some("set  null".into()),
+            on_update: None,
+        };
+        let drops = [
+            ColumnChange::DropIndex {
+                name: "old_idx".into(),
+            },
+            ColumnChange::DropForeignKey {
+                name: "old_fk".into(),
+            },
+            ColumnChange::DropTrigger {
+                name: "audit".into(),
+            },
+        ];
+        let all = |dialect, ns: Option<&str>, table: &str| {
+            let mut changes = vec![key.clone(), index.clone()];
+            changes.extend(drops.iter().cloned());
+            changes.push(ColumnChange::Add {
+                column: column("qty", "int", true, None),
+            });
+            statements(dialect, ns, table, &changes).unwrap()
+        };
+        assert_eq!(
+            all(SqlDialect::Postgres, Some("shop"), "\"shop\".\"orders\""),
+            [
+                "DROP INDEX \"shop\".\"old_idx\"",
+                "ALTER TABLE \"shop\".\"orders\" DROP CONSTRAINT \"old_fk\"",
+                "DROP TRIGGER \"audit\" ON \"shop\".\"orders\"",
+                "ALTER TABLE \"shop\".\"orders\" ADD COLUMN \"qty\" int",
+                "CREATE UNIQUE INDEX \"by_user\" ON \"shop\".\"orders\" (\"user_id\", \"created_at\" DESC)",
+                "ALTER TABLE \"shop\".\"orders\" ADD CONSTRAINT \"orders_user\" FOREIGN KEY (\"user_id\") REFERENCES \"shop\".\"users\" (\"id\") ON DELETE SET NULL",
+            ]
+        );
+        let mysql = all(SqlDialect::MySql, Some("shop"), "`shop`.`orders`");
+        assert_eq!(mysql[0], "DROP INDEX `old_idx` ON `shop`.`orders`");
+        assert_eq!(
+            mysql[1],
+            "ALTER TABLE `shop`.`orders` DROP FOREIGN KEY `old_fk`"
+        );
+        assert_eq!(mysql[2], "DROP TRIGGER `shop`.`audit`");
+        let tsql = all(SqlDialect::SqlServer, Some("dbo"), "[dbo].[orders]");
+        assert_eq!(tsql[0], "DROP INDEX [old_idx] ON [dbo].[orders]");
+        assert_eq!(tsql[2], "DROP TRIGGER [dbo].[audit]");
+        assert_eq!(tsql[3], "ALTER TABLE [dbo].[orders] ADD [qty] int");
+
+        // SQLite keeps foreign keys in the table's definition.
+        let sqlite = statements(
+            SqlDialect::Sqlite,
+            None,
+            "\"orders\"",
+            &[index.clone(), drops[0].clone(), drops[2].clone()],
+        )
+        .unwrap();
+        assert_eq!(
+            sqlite,
+            [
+                "DROP INDEX \"old_idx\"",
+                "DROP TRIGGER \"audit\"",
+                "CREATE UNIQUE INDEX \"by_user\" ON \"orders\" (\"user_id\", \"created_at\" DESC)"
+            ]
+        );
+        assert!(matches!(
+            statements(SqlDialect::Sqlite, None, "t", std::slice::from_ref(&key)),
+            Err(Error::Unsupported(_))
+        ));
+        assert!(matches!(
+            statements(
+                SqlDialect::ClickHouse,
+                None,
+                "t",
+                std::slice::from_ref(&index)
+            ),
+            Err(Error::Unsupported(_))
+        ));
+
+        // Nonsense is refused before anything runs.
+        let bad =
+            |change: ColumnChange| statements(SqlDialect::Postgres, None, "t", &[change]).is_err();
+        assert!(bad(ColumnChange::AddIndex {
+            name: " ".into(),
+            columns: vec![IndexColumn {
+                name: "a".into(),
+                descending: false
+            }],
+            unique: false
+        }));
+        assert!(bad(ColumnChange::AddIndex {
+            name: "i".into(),
+            columns: vec![],
+            unique: false
+        }));
+        assert!(bad(ColumnChange::AddForeignKey {
+            name: "f".into(),
+            columns: vec!["a".into(), "b".into()],
+            ref_namespace: None,
+            ref_table: "u".into(),
+            ref_columns: vec!["id".into()],
+            on_delete: None,
+            on_update: None,
+        }));
+        assert!(bad(ColumnChange::AddForeignKey {
+            name: "f".into(),
+            columns: vec!["a".into()],
+            ref_namespace: None,
+            ref_table: "u".into(),
+            ref_columns: vec!["id".into()],
+            on_delete: Some("DROP TABLE x".into()),
+            on_update: None,
+        }));
     }
 
     #[test]
@@ -494,6 +860,7 @@ mod tests {
         assert!(
             statements(
                 SqlDialect::Sqlite,
+                None,
                 "\"orders\"",
                 &[ColumnChange::Modify {
                     from,
@@ -509,6 +876,7 @@ mod tests {
         assert!(
             statements(
                 SqlDialect::Postgres,
+                None,
                 "t",
                 &[ColumnChange::Add {
                     column: column("a", "int; DROP TABLE t", true, None)
@@ -519,6 +887,7 @@ mod tests {
         assert!(
             statements(
                 SqlDialect::Postgres,
+                None,
                 "t",
                 &[ColumnChange::Add {
                     column: column("a", "int", true, Some("0; DROP TABLE t"))
@@ -529,6 +898,7 @@ mod tests {
         assert!(
             statements(
                 SqlDialect::Postgres,
+                None,
                 "t",
                 &[ColumnChange::Add {
                     column: column("a", " ", true, None)
@@ -550,6 +920,7 @@ mod tests {
         assert_eq!(
             statements(
                 SqlDialect::Postgres,
+                None,
                 "t",
                 &[
                     add("b"),
@@ -569,7 +940,13 @@ mod tests {
             to: column("key", "bigint", false, Some("0")),
         };
         assert_eq!(
-            statements(SqlDialect::Postgres, "t", std::slice::from_ref(&renamed)).unwrap(),
+            statements(
+                SqlDialect::Postgres,
+                None,
+                "t",
+                std::slice::from_ref(&renamed)
+            )
+            .unwrap(),
             [
                 "ALTER TABLE t RENAME COLUMN \"id\" TO \"key\"",
                 "ALTER TABLE t ALTER COLUMN \"key\" TYPE bigint",
@@ -578,7 +955,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            statements(SqlDialect::MySql, "t", &[renamed]).unwrap(),
+            statements(SqlDialect::MySql, None, "t", &[renamed]).unwrap(),
             ["ALTER TABLE t CHANGE COLUMN `id` `key` bigint DEFAULT 0 NOT NULL"]
         );
     }

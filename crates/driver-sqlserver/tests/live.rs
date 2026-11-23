@@ -710,7 +710,7 @@ async fn changes_columns_with_t_sql() {
         },
     ];
     let table = conn.qualified(Some("lw_alter"), "items");
-    let list = statements(conn.dialect(), &table, &changes).unwrap();
+    let list = statements(conn.dialect(), Some("lw_alter"), &table, &changes).unwrap();
     apply_on(conn.as_ref(), list).await.unwrap();
 
     let description = conn

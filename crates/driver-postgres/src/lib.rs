@@ -382,10 +382,12 @@ impl Connection for PostgresConnection {
         };
         let rows = self
             .catalog_query(
-                // pg_get_indexdef gives each key as text, so expressions are covered too.
+                // pg_get_indexdef gives each key as text, so expressions are covered too;
+                // bit 0 of indoption marks a descending key.
                 &format!(
                     "SELECT i.relname, ix.indisunique, ix.indisprimary, \
                         ARRAY(SELECT pg_catalog.pg_get_indexdef(ix.indexrelid, k + 1, true) \
+                                     || CASE WHEN (COALESCE(ix.indoption[k], 0) & 1) = 1 THEN ' DESC' ELSE '' END \
                               FROM generate_subscripts(ix.indkey, 1) AS k ORDER BY k), \
                         am.amname::text, {size}, \
                         pg_catalog.pg_get_expr(ix.indpred, ix.indrelid) \

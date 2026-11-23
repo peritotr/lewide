@@ -495,7 +495,12 @@ async fn preview_structure(
 ) -> Result<Vec<String>, Error> {
     let connection = state.session(session).await?;
     let table = connection.qualified(changes.namespace.as_deref(), &changes.table);
-    dbclient_core::structure::statements(connection.dialect(), &table, &changes.changes)
+    dbclient_core::structure::statements(
+        connection.dialect(),
+        changes.namespace.as_deref(),
+        &table,
+        &changes.changes,
+    )
 }
 
 /// Applies column changes to a table. Refused while the user has a transaction open.
@@ -512,8 +517,12 @@ async fn apply_structure(
         ));
     }
     let table = connection.qualified(changes.namespace.as_deref(), &changes.table);
-    let statements =
-        dbclient_core::structure::statements(connection.dialect(), &table, &changes.changes)?;
+    let statements = dbclient_core::structure::statements(
+        connection.dialect(),
+        changes.namespace.as_deref(),
+        &table,
+        &changes.changes,
+    )?;
     let result = dbclient_core::structure::apply_on(connection.as_ref(), statements).await;
     state.or_lost(session, result).await
 }

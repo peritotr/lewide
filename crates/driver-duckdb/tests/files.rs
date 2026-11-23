@@ -440,6 +440,7 @@ async fn alters_columns() {
     };
     let statements = dbclient_core::structure::statements(
         conn.dialect(),
+        None,
         &conn.qualified(None, "t"),
         &changes.changes,
     )
