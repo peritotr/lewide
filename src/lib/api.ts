@@ -430,7 +430,7 @@ export interface VectorSearchRequest {
   with_vector: boolean;
 }
 
-export type ImportFormat = { format: "csv"; delimiter: string; header: boolean; trim: boolean; null_tokens: string[] } | { format: "json" } | { format: "json_lines" };
+export type ImportFormat = { format: "csv"; delimiter: string; header: boolean; trim: boolean; null_tokens: string[] } | { format: "json" } | { format: "json_lines" } | { format: "xlsx"; sheet?: string | null; header: boolean };
 
 export interface ImportInspection {
   columns: string[];
@@ -438,6 +438,8 @@ export interface ImportInspection {
   sample: (string | null)[][];
   total_rows: number;
   bytes: number;
+  /** The workbook's sheets, for a spreadsheet; empty otherwise. */
+  sheets: string[];
 }
 
 /** Which file column (by index) feeds which table column. */
@@ -481,7 +483,9 @@ export type ExportFormat =
   | { format: "json" }
   | { format: "json_lines" }
   /** `table` is the name as it should appear, already quoted. */
-  | { format: "sql"; table: string; dialect: "postgres" | "mysql" | "sqlite" | "sqlserver" | "clickhouse" | "duckdb" };
+  | { format: "sql"; table: string; dialect: "postgres" | "mysql" | "sqlite" | "sqlserver" | "clickhouse" | "duckdb" }
+  /** One sheet; Excel names it when `sheet` is left out. */
+  | { format: "xlsx"; sheet?: string | null };
 
 /** A column and the value it has or should get. */
 export interface Cell {

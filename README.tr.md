@@ -41,7 +41,7 @@ hepsini tek yerde toplar.
 | 🧱 **Bir bakışta yapı** | Sütunlar, indeksler, iki yönlü yabancı anahtarlar, tetikleyiciler ve DDL; sütunları ALTER TABLE yazmadan değiştir. |
 | 🤖 **Verine saygılı yapay zekâ** | Sorguları Anthropic, OpenAI, Gemini ya da Ollama dahil OpenAI uyumlu herhangi bir sunucuyla açıkla, incele, iyileştir. Yalnızca tablo ve sütun adları gönderilir; ne gittiğini görebilirsin. |
 | 🔐 **Güvenli bağlantılar** | Parolalar dosyada değil, sistemin anahtar zincirinde. Her ağ veritabanı için SSH tüneli ve TLS. |
-| 📦 **İçe ve dışa aktarma** | CSV ve JSON içe aktarma (sütun eşleme, önizleme, sığmayan satırların raporu); CSV, JSON ya da SQL olarak dışa aktarma. |
+| 📦 **İçe ve dışa aktarma** | CSV, JSON ve Excel içe aktarma (sütun eşleme, önizleme, sığmayan satırların raporu); CSV, JSON, Excel ya da SQL olarak dışa aktarma. |
 | 🌍 **Senin için** | Türkçe ve İngilizce, açık ve koyu tema, MIT / Apache-2.0. Hesap yok, telemetri yok. |
 
 ## Desteklenen veritabanları

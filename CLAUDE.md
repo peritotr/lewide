@@ -62,7 +62,7 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 pnpm tsc --noEmit && pnpm vitest run && pnpm i18n:check && pnpm build
 ```
 
-Last full run (2026-11-23): 339 Rust tests, 74 frontend tests, clippy clean, translations 1045/1045, build ok. Live suites of the newest drivers: Milvus 3.0.6 (7), InfluxDB 3.12.3 Core (6), Couchbase Community 8.0.2 (6). The PostgreSQL and MySQL live suites (18 tests each) passed against PostgreSQL 17, CockroachDB, YugabyteDB 2025.2, TimescaleDB 2.25, MySQL 8.4, MariaDB 11 and TiDB 8.5.
+Last full run (2026-11-23): 341 Rust tests, 74 frontend tests, clippy clean, translations 1045/1045, build ok. Live suites of the newest drivers: Milvus 3.0.6 (7), InfluxDB 3.12.3 Core (6), Couchbase Community 8.0.2 (6). The PostgreSQL and MySQL live suites (18 tests each) passed against PostgreSQL 17, CockroachDB, YugabyteDB 2025.2, TimescaleDB 2.25, MySQL 8.4, MariaDB 11 and TiDB 8.5.
 
 Live driver tests are skipped (and pass) unless their environment variable is set:
 
@@ -106,6 +106,7 @@ Always run `… down` afterwards. CI (`.github/workflows/ci.yml`) runs the check
 - **Vector and graph ids are strings on the wire** (64-bit integers would lose precision in JavaScript).
 - **`serde_json` uses `preserve_order`** (declared in `crates/core/Cargo.toml`): documents and imported JSON keep their order.
 - **Minimum score for vector search is applied in the driver**, so the UI can say how many were left out.
+- **Excel through two pure-Rust crates** (approved 2026-11-23): `rust_xlsxwriter` writes one sheet (bold header, frozen first row; integers up to 2^53, decimals that a double holds exactly, booleans and ISO dates as typed cells, the rest as text; 1,048,576 rows at most, the sheet is built in memory) and `calamine` reads `.xlsx`, `.xlsm`, `.xls` and `.ods` (any sheet, cells as text, dates as ISO 8601 text, empty rows skipped). Code in `crates/core/src/xlsx.rs`. Dates read from a workbook assume the 1900 date system (calamine does not expose the 1904 flag without its chrono feature).
 - **Own i18n instead of a library:** source text is the key; `scripts/i18n-check.mjs` finds missing, unused and placeholder-broken entries.
 - **Demo backend:** in a plain browser the UI runs on canned data, so screens can be built and reviewed without a database. It has sample connections for every data model (Postgres, Redis, MongoDB, Qdrant, Neo4j); the README screenshots are taken from it.
 - **App identifier `io.github.peritotr.lewide`.** The keychain service name is the identifier, so secrets saved under an earlier identifier are not found.
@@ -183,4 +184,4 @@ See [ROADMAP.md](ROADMAP.md) for the public list. In more detail:
 - **Neo4j:** TLS never tested against a TLS server; no transactions and no cancel; `max_rows` truncates after the download.
 - **Qdrant:** `ping` uses `/healthz`, which needs no key, so a revoked key shows only on the next real call.
 - **JSON import order:** columns come in file order, not alphabetical (a result of `preserve_order`).
-- Other gaps: creating or editing a trigger's body (only dropping is built); AI structured findings (AI05/AI14); Excel import/export; embeddings for vector text search; no splash screen.
+- Other gaps: creating or editing a trigger's body (only dropping is built); AI structured findings (AI05/AI14); embeddings for vector text search; no splash screen.

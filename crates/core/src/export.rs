@@ -1,7 +1,8 @@
-//! Writing rows to a file: CSV and its relatives, JSON, and SQL `INSERT`s.
+//! Writing rows to a file: CSV and its relatives, JSON, SQL `INSERT`s and Excel.
 //!
 //! An [`Exporter`] takes rows a page at a time, so a table of any size goes
-//! through without being held in memory.
+//! through without being held in memory; Excel is the exception: the sheet
+//! is built in memory and written at the end (see [`crate::xlsx`]).
 
 use std::io::Write;
 
@@ -25,6 +26,12 @@ pub enum ExportFormat {
         /// The table name as it should appear, already quoted.
         table: String,
         dialect: SqlDialect,
+    },
+    /// An Excel workbook with one sheet; a header row in bold.
+    Xlsx {
+        /// The sheet's name; Excel's own (`Sheet1`) when none is given.
+        #[serde(default)]
+        sheet: Option<String>,
     },
 }
 
@@ -61,6 +68,7 @@ pub struct Exporter<W: Write> {
     format: ExportFormat,
     columns: Vec<String>,
     rows: u64,
+    sheet: Option<crate::xlsx::SheetWriter>,
 }
 
 impl<W: Write> Exporter<W> {
@@ -73,11 +81,18 @@ impl<W: Write> Exporter<W> {
                 "the delimiter cannot be a quote or a line break".into(),
             ));
         }
+        let sheet = match &format {
+            ExportFormat::Xlsx { sheet } => {
+                Some(crate::xlsx::SheetWriter::new(sheet.as_deref(), &columns)?)
+            }
+            _ => None,
+        };
         let mut exporter = Self {
             out,
             format,
             columns,
             rows: 0,
+            sheet,
         };
         exporter.start().map_err(file_err)?;
         Ok(exporter)
@@ -101,7 +116,7 @@ impl<W: Write> Exporter<W> {
                 }
             }
             ExportFormat::Json => self.out.write_all(b"[")?,
-            ExportFormat::JsonLines | ExportFormat::Sql { .. } => {}
+            ExportFormat::JsonLines | ExportFormat::Sql { .. } | ExportFormat::Xlsx { .. } => {}
         }
         Ok(())
     }
@@ -115,8 +130,12 @@ impl<W: Write> Exporter<W> {
                     self.columns.len()
                 )));
             }
-            let line = self.row(row)?;
-            self.out.write_all(line.as_bytes()).map_err(file_err)?;
+            if let Some(sheet) = self.sheet.as_mut() {
+                sheet.write_row(row)?;
+            } else {
+                let line = self.row(row)?;
+                self.out.write_all(line.as_bytes()).map_err(file_err)?;
+            }
             self.rows += 1;
         }
         Ok(())
@@ -157,6 +176,7 @@ impl<W: Write> Exporter<W> {
                     values.join(", ")
                 )
             }
+            ExportFormat::Xlsx { .. } => unreachable!("Excel rows go to the sheet"),
         })
     }
 
@@ -172,6 +192,10 @@ impl<W: Write> Exporter<W> {
 
     /// Writes whatever follows the last row and returns how many rows went out.
     pub fn finish(mut self) -> Result<u64> {
+        if let Some(sheet) = self.sheet.take() {
+            let bytes = sheet.finish()?;
+            self.out.write_all(&bytes).map_err(file_err)?;
+        }
         if self.format == ExportFormat::Json {
             let end: &[u8] = if self.rows == 0 { b"]\n" } else { b"\n]\n" };
             self.out.write_all(end).map_err(file_err)?;

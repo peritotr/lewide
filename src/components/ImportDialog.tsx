@@ -44,6 +44,7 @@ export function ImportDialog({ conn, tabId, view }: { conn: Conn; tabId: string;
   const [kind, setKind] = useState<Kind>("csv");
   const [csv, setCsv] = useState({ delimiter: ",", header: true, trim: true, nulls: "NULL, \\N" });
   const [lines, setLines] = useState(false);
+  const [excel, setExcel] = useState<{ sheet: string | null; header: boolean }>({ sheet: null, header: true });
   const [inspection, setInspection] = useState<ImportInspection | { error: string } | "loading" | null>(null);
   // Per file column: the table column it feeds, or SKIP. `manual` marks the ones the user chose.
   const [targets, setTargets] = useState<string[]>([]);
@@ -60,15 +61,16 @@ export function ImportDialog({ conn, tabId, view }: { conn: Conn; tabId: string;
 
   const format = useMemo<ImportFormat>(() => {
     if (kind === "csv") return { format: "csv", delimiter: csv.delimiter, header: csv.header, trim: csv.trim, null_tokens: csv.nulls.split(",").map((x) => x.trim()).filter(Boolean) };
+    if (kind === "xlsx") return { format: "xlsx", sheet: excel.sheet, header: excel.header };
     return { format: lines ? "json_lines" : "json" };
-  }, [kind, csv, lines]);
+  }, [kind, csv, lines, excel]);
 
   const autoMatch = (file: string[]) => file.map((name) => columns.find((c) => normal(c.name) === normal(name))?.name ?? SKIP);
 
   // The file is read again whenever the path or the way to read it changes.
   useEffect(() => {
     if (step !== 0) return;
-    if (path.trim() === "" || kind === "xlsx" || kind === "sql") {
+    if (path.trim() === "" || kind === "sql") {
       setInspection(null);
       return;
     }
@@ -119,7 +121,7 @@ export function ImportDialog({ conn, tabId, view }: { conn: Conn; tabId: string;
   const close = () => openDialog(null);
 
   async function browse() {
-    const picked = await open({ multiple: false, filters: [{ name: t("Data files"), extensions: ["csv", "tsv", "txt", "json", "jsonl", "ndjson"] }] }).catch(() => null);
+    const picked = await open({ multiple: false, filters: [{ name: t("Data files"), extensions: ["csv", "tsv", "txt", "json", "jsonl", "ndjson", "xlsx", "xlsm", "xls", "ods"] }] }).catch(() => null);
     if (typeof picked === "string") choose(picked);
   }
   function choose(next: string) {
@@ -131,6 +133,9 @@ export function ImportDialog({ conn, tabId, view }: { conn: Conn; tabId: string;
     } else if (/\.json$/i.test(next)) {
       setKind("json");
       setLines(false);
+    } else if (/\.(xlsx|xlsm|xls|ods)$/i.test(next)) {
+      setKind("xlsx");
+      setExcel({ sheet: null, header: true });
     } else if (/\.(csv|tsv|txt)$/i.test(next)) {
       setKind("csv");
       if (/\.tsv$/i.test(next)) setCsv((c) => ({ ...c, delimiter: "\t" }));
@@ -254,7 +259,7 @@ export function ImportDialog({ conn, tabId, view }: { conn: Conn; tabId: string;
               <div className="grid grid-cols-4 gap-s3">
                 {FORMATS.map((f) => {
                   const selected = f.kind === kind;
-                  const unavailable = f.kind === "xlsx" || f.kind === "sql";
+                  const unavailable = f.kind === "sql";
                   return (
                     <button
                       key={f.kind}
@@ -299,6 +304,27 @@ export function ImportDialog({ conn, tabId, view }: { conn: Conn; tabId: string;
                   </div>
                 </>
               )}
+              {kind === "xlsx" && (
+                <>
+                  {/* Not drawn in the design: the sheet to read, as the CSV options are laid out. */}
+                  {file && file.sheets.length > 1 && (
+                    <Field label={t("Sheet")} className="w-[220px]">
+                      <select aria-label={t("Sheet")} className={select} value={excel.sheet ?? file.sheets[0]} onChange={(e) => setExcel({ ...excel, sheet: e.target.value })}>
+                        {file.sheets.map((sheet) => (
+                          <option key={sheet} value={sheet}>
+                            {sheet}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  )}
+                  <div className="flex h-[28px] items-center">
+                    <Switch checked={excel.header} onChange={(header) => setExcel({ ...excel, header })}>
+                      {t("First row is a header")}
+                    </Switch>
+                  </div>
+                </>
+              )}
               {kind === "json" && (
                 <div className="flex flex-col gap-[6px]">
                   <span className="label">{t("Layout")}</span>
@@ -327,7 +353,9 @@ export function ImportDialog({ conn, tabId, view }: { conn: Conn; tabId: string;
                 </Strip>
               ) : file ? (
                 <Strip kind="note">
-                  {t("{rows} rows and {columns} columns found. Quotes are double quotes; the text is read as UTF-8.", { rows: file.total_rows, columns: file.columns.length })}
+                  {kind === "xlsx"
+                    ? t("{rows} rows and {columns} columns found. Dates are read as ISO 8601 text.", { rows: file.total_rows, columns: file.columns.length })
+                    : t("{rows} rows and {columns} columns found. Quotes are double quotes; the text is read as UTF-8.", { rows: file.total_rows, columns: file.columns.length })}
                 </Strip>
               ) : (
                 <p className="text-[12.5px] text-text-3">{t("Choose a file to see what it holds.")}</p>

@@ -804,24 +804,28 @@ async fn write_documents<W: std::io::Write>(
     columns: Vec<String>,
     out: W,
 ) -> Result<u64, Error> {
-    /// Where documents go: through the table exporter (CSV), or as JSON text.
+    /// Where documents go: through the table exporter (CSV, Excel), or as JSON text.
     enum Sink<W: std::io::Write> {
-        Table(Exporter<W>),
+        // Boxed: an Excel exporter holds its sheet and is much larger than the other case.
+        Table(Box<Exporter<W>>),
         Json { out: W, lines: bool, written: u64 },
     }
     let file_error = |e: std::io::Error| Error::File(e.to_string());
     let store = document(connection)?;
-    let mut sink = match &format {
-        ExportFormat::Csv(_) => Sink::Table(Exporter::new(out, format.clone(), columns.clone())?),
-        ExportFormat::Json | ExportFormat::JsonLines => Sink::Json {
-            out,
-            lines: format == ExportFormat::JsonLines,
-            written: 0,
-        },
-        ExportFormat::Sql { .. } => {
-            return Err(Error::Unsupported("SQL statements for documents"));
-        }
-    };
+    let mut sink =
+        match &format {
+            ExportFormat::Csv(_) | ExportFormat::Xlsx { .. } => Sink::Table(Box::new(
+                Exporter::new(out, format.clone(), columns.clone())?,
+            )),
+            ExportFormat::Json | ExportFormat::JsonLines => Sink::Json {
+                out,
+                lines: format == ExportFormat::JsonLines,
+                written: 0,
+            },
+            ExportFormat::Sql { .. } => {
+                return Err(Error::Unsupported("SQL statements for documents"));
+            }
+        };
     request.skip = 0;
     request.limit = EXPORT_PAGE_ROWS;
     loop {

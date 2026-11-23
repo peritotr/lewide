@@ -41,7 +41,7 @@ MongoDB Compass, RedisInsight, Neo4j Browser and Kibana Dev Tools, LewIDE puts t
 | 🧱 **Structure at a glance** | Columns, indexes, foreign keys (both ways), triggers and the DDL; change columns without writing ALTER TABLE by hand. |
 | 🤖 **An AI that respects your data** | Explain, review and optimize queries with Anthropic, OpenAI, Gemini or any OpenAI-compatible server, Ollama included. Only table and column names are sent, and you can see exactly what. |
 | 🔐 **Secure connections** | Passwords in the system keychain, never in a file. SSH tunnels and TLS for every network database. |
-| 📦 **Import and export** | Import CSV and JSON with a column mapping, a preview and a report of the rows that did not fit; export to CSV, JSON or SQL. |
+| 📦 **Import and export** | Import CSV, JSON and Excel with a column mapping, a preview and a report of the rows that did not fit; export to CSV, JSON, Excel or SQL. |
 | 🌍 **Yours to use** | English and Turkish, light and dark themes, MIT / Apache-2.0. No account, no telemetry. |
 
 ## Supported databases

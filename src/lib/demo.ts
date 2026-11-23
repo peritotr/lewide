@@ -242,7 +242,7 @@ export const demoBackend: Backend = {
     format.format === "csv"
       ? [columns.join(format.delimiter ?? ","), ...rows.map((row) => row.map((v) => (v.type === "null" ? "" : "value" in v ? String(v.value) : "")).join(format.delimiter ?? ","))].join("\n")
       : rows.map((row) => JSON.stringify(Object.fromEntries(columns.map((c, i) => [c, "value" in row[i] ? row[i].value : null])))).join("\n"),
-  importInspect: async () => ({ columns: ["id", "email", "country", "signup"], sample: [["9001", "new1@example.com", "TR", "2026-11-01"], ["9002", "new2@example.com", "DE", null], ["x", "broken@example.com", "US", "2026-11-03"]], total_rows: 1240, bytes: 48213 }),
+  importInspect: async () => ({ columns: ["id", "email", "country", "signup"], sample: [["9001", "new1@example.com", "TR", "2026-11-01"], ["9002", "new2@example.com", "DE", null], ["x", "broken@example.com", "US", "2026-11-03"]], total_rows: 1240, bytes: 48213, sheets: [] }),
   importCheck: async (_session, _target, _path, _format, mapping) => ({
     total_rows: 1240,
     checked: 3,

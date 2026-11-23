@@ -38,6 +38,15 @@ pub enum ImportFormat {
     Json,
     /// One object per line.
     JsonLines,
+    /// An Excel or OpenDocument spreadsheet (`.xlsx`, `.xlsm`, `.xls`, `.ods`).
+    Xlsx {
+        /// The sheet to read; the first when none is given.
+        #[serde(default)]
+        sheet: Option<String>,
+        /// The first row holds the column names.
+        #[serde(default = "yes")]
+        header: bool,
+    },
 }
 
 /// A file as a table of texts. `None` is a missing value.
@@ -57,6 +66,8 @@ pub struct Inspection {
     pub sample: Vec<Vec<Option<String>>>,
     pub total_rows: usize,
     pub bytes: u64,
+    /// The workbook's sheets, for a spreadsheet; empty for text files.
+    pub sheets: Vec<String>,
 }
 
 pub fn read_file(path: &Path, format: &ImportFormat) -> Result<Source> {
@@ -67,6 +78,9 @@ pub fn read_file(path: &Path, format: &ImportFormat) -> Result<Source> {
             size / 1024 / 1024,
             MAX_FILE_BYTES / 1024 / 1024
         )));
+    }
+    if let ImportFormat::Xlsx { sheet, header } = format {
+        return crate::xlsx::read(path, sheet.as_deref(), *header);
     }
     let bytes = std::fs::read(path).map_err(file_err)?;
     let text =
@@ -101,6 +115,9 @@ pub fn parse(text: &str, format: &ImportFormat) -> Result<Source> {
                     .map(|(i, v)| (i as u32 + 1, v)),
             )
         }
+        ImportFormat::Xlsx { .. } => Err(Error::File(
+            "a spreadsheet is read from its file, not from text".into(),
+        )),
         ImportFormat::JsonLines => {
             let mut items = Vec::new();
             for (i, line) in text.lines().enumerate() {
@@ -278,7 +295,12 @@ fn parse_csv(
 pub fn inspect(path: &Path, format: &ImportFormat) -> Result<Inspection> {
     let bytes = std::fs::metadata(path).map_err(file_err)?.len();
     let source = read_file(path, format)?;
+    let sheets = match format {
+        ImportFormat::Xlsx { .. } => crate::xlsx::sheet_names(path)?,
+        _ => Vec::new(),
+    };
     Ok(Inspection {
+        sheets,
         total_rows: source.rows.len(),
         sample: source.rows.into_iter().take(20).collect(),
         columns: source.columns,

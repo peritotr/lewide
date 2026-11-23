@@ -9,7 +9,7 @@ import { dialectOf, quoteIdent } from "../lib/sql";
 import { openDialog, useApp, type Conn, type Dialog as DialogState } from "../store";
 import { Button, Checkbox, Dialog, Field, Segmented, Strip, Switch, TextInput } from "./dialog";
 import { Spinner } from "./Results";
-import { NOT_BUILT, Tag } from "./ui";
+import { Tag } from "./ui";
 import { msg, t, tn } from "../i18n";
 
 type Source = Extract<DialogState, { kind: "export" }>["source"];
@@ -58,11 +58,14 @@ export function ExportDialog({ conn, source }: { conn: Conn; source: Source }) {
   const [preview, setPreview] = useState<{ text: string } | { error: string } | null>(null);
   const [run, setRun] = useState<Run>({ state: "idle" });
 
+  // Excel allows 31 characters in a sheet name and none of []:*?/\.
+  const sheet = baseName.replace(/[[\]:*?/\\]/g, "_").slice(0, 31);
   const format = useMemo<ExportFormat>(() => {
     if (kind === "csv") return { format: "csv", ...csv };
+    if (kind === "xlsx") return { format: "xlsx", sheet };
     if (kind === "sql") return { format: "sql", table: sqlTable, dialect };
     return { format: lines ? "json_lines" : "json" };
-  }, [kind, csv, lines, sqlTable, dialect]);
+  }, [kind, csv, lines, sqlTable, dialect, sheet]);
   const extension = kind === "json" && lines ? "jsonl" : FORMATS.find((f) => f.kind === kind)!.extension;
   const chosen = columns.filter((c) => c.include);
   const names = chosen.map((c) => c.name.trim());
@@ -83,7 +86,8 @@ export function ExportDialog({ conn, source }: { conn: Conn; source: Source }) {
     }
     let current = true;
     api
-      .exportPreview(names, project(loaded.rows.slice(0, PREVIEW_ROWS)), format)
+      // A workbook is not text: its preview shows the cells as CSV would.
+      .exportPreview(names, project(loaded.rows.slice(0, PREVIEW_ROWS)), format.format === "xlsx" ? { format: "csv" } : format)
       .then((text) => current && setPreview({ text }))
       .catch((e) => current && setPreview({ error: errorMessage(e) }));
     return () => {
@@ -165,7 +169,7 @@ export function ExportDialog({ conn, source }: { conn: Conn; source: Source }) {
           )}
           {step < 3 && <Button onClick={close}>{run.state === "running" ? t("Close") : t("Cancel")}</Button>}
           {step === 0 && (
-            <Button variant="primary" disabled={path.trim() === "" || kind === "xlsx"} onClick={() => setStep(1)}>
+            <Button variant="primary" disabled={path.trim() === ""} onClick={() => setStep(1)}>
               {t("Next: columns")}
             </Button>
           )}
@@ -232,15 +236,12 @@ export function ExportDialog({ conn, source }: { conn: Conn; source: Source }) {
               <div className="grid grid-cols-4 gap-s3">
                 {FORMATS.map((f) => {
                   const selected = f.kind === kind;
-                  const unavailable = f.kind === "xlsx";
                   return (
                     <button
                       key={f.kind}
                       type="button"
                       aria-pressed={selected}
-                      disabled={unavailable}
-                      title={unavailable ? t(NOT_BUILT) : undefined}
-                      className={`relative flex flex-col items-start gap-[6px] border p-s3 text-left disabled:cursor-not-allowed disabled:opacity-45 ${selected ? "border-accent bg-accent-tint outline outline-1 outline-accent" : "border-line enabled:hover:bg-hover"}`}
+                      className={`relative flex flex-col items-start gap-[6px] border p-s3 text-left ${selected ? "border-accent bg-accent-tint outline outline-1 outline-accent" : "border-line enabled:hover:bg-hover"}`}
                       onClick={() => setKind(f.kind)}
                     >
                       <span className="border border-text-3 px-[5px] py-[2px] font-mono text-[10.5px] leading-none font-medium">{f.badge}</span>

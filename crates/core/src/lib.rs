@@ -18,6 +18,7 @@ pub mod sql;
 pub mod structure;
 mod value;
 pub mod vector;
+pub mod xlsx;
 
 pub use driver::{Connection, Driver};
 pub use edit::{ApplyResult, ChangeSet, RowChange};
