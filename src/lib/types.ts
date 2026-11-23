@@ -11,6 +11,9 @@ export interface DatabaseType {
   driver?: string;
   /** Default port, when it differs from the driver's own. */
   port?: number;
+  /** The engine's usual user and database, shown as hints in the form. */
+  user?: string;
+  database?: string;
 }
 
 export const TYPE_GROUPS: { model: string; types: DatabaseType[] }[] = [
@@ -28,15 +31,20 @@ export const TYPE_GROUPS: { model: string; types: DatabaseType[] }[] = [
   },
   {
     model: msg("Distributed SQL"),
-    // Speaks the PostgreSQL protocol; the PostgreSQL driver's tests also run against it.
-    types: [{ code: "Cr", name: "CockroachDB", driver: "postgres", port: 26257 }, { code: "Ti", name: "TiDB" }, { code: "Yb", name: "YugabyteDB" }],
+    // Each speaks the protocol of the driver it names; that driver's tests also run against it.
+    types: [
+      { code: "Cr", name: "CockroachDB", driver: "postgres", port: 26257, user: "root", database: "defaultdb" },
+      { code: "Ti", name: "TiDB", driver: "mysql", port: 4000, user: "root", database: "test" },
+      { code: "Yb", name: "YugabyteDB", driver: "postgres", port: 5433, user: "yugabyte", database: "yugabyte" },
+    ],
   },
   { model: msg("Analytic"), types: [{ code: "Ch", name: "ClickHouse", driver: "clickhouse" }, { code: "Dk", name: "DuckDB", driver: "duckdb" }, { code: "Sf", name: "Snowflake" }, { code: "Bq", name: "BigQuery" }] },
   { model: msg("Document"), types: [{ code: "Mg", name: "MongoDB", driver: "mongodb" }, { code: "Cb", name: "Couchbase" }] },
   { model: msg("Key-value"), types: [{ code: "Rd", name: "Redis", driver: "redis" }, { code: "Vk", name: "Valkey", driver: "redis" }] },
   { model: msg("Vector"), types: [{ code: "Qd", name: "Qdrant", driver: "qdrant" }, { code: "Pv", name: "pgvector", driver: "pgvector" }, { code: "Mv", name: "Milvus" }] },
   { model: msg("Graph"), types: [{ code: "N4", name: "Neo4j", driver: "neo4j" }] },
-  { model: msg("Time series"), types: [{ code: "Ts", name: "TimescaleDB" }, { code: "If", name: "InfluxDB" }] },
+  // TimescaleDB is a PostgreSQL extension: the PostgreSQL driver serves it.
+  { model: msg("Time series"), types: [{ code: "Ts", name: "TimescaleDB", driver: "postgres", user: "postgres", database: "postgres" }, { code: "If", name: "InfluxDB" }] },
   { model: msg("Search"), types: [{ code: "Es", name: "Elasticsearch", driver: "elasticsearch" }, { code: "Os", name: "OpenSearch", driver: "elasticsearch", port: 9200 }] },
 ];
 

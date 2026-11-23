@@ -243,8 +243,18 @@ impl Connection for PostgresConnection {
         if self.cockroach.is_some() {
             return Ok(self.cockroach.clone());
         }
-        let rows = self.catalog_query("SHOW server_version", &[]).await?;
-        Ok(rows.first().and_then(|r| r.get(0)))
+        let rows = self
+            .catalog_query(
+                "SELECT pg_catalog.current_setting('server_version'), \
+                        (SELECT extversion::text FROM pg_catalog.pg_extension \
+                         WHERE extname = 'timescaledb')",
+                &[],
+            )
+            .await?;
+        Ok(rows.first().map(|r| {
+            let timescaledb: Option<String> = r.get(1);
+            engine_version(&r.get::<_, String>(0), timescaledb.as_deref())
+        }))
     }
 
     async fn current_namespace(&self) -> Result<Option<String>> {
@@ -258,8 +268,12 @@ impl Connection for PostgresConnection {
     async fn list_namespaces(&self) -> Result<Vec<Namespace>> {
         let rows = self
             .catalog_query(
+                // TimescaleDB's own schemas (chunks, catalog, its information
+                // views) are hidden like the system ones.
                 "SELECT nspname FROM pg_catalog.pg_namespace \
                  WHERE nspname !~ '^pg_' AND nspname <> 'information_schema' \
+                   AND nspname !~ '^_timescaledb_' \
+                   AND nspname NOT IN ('timescaledb_information', 'timescaledb_experimental') \
                  ORDER BY nspname",
                 &[],
             )
@@ -723,7 +737,6 @@ impl Connection for PostgresConnection {
     }
 }
 
-/// "CockroachDB CCL v26.4.1 (...)" → "26.4.1"; `None` for any other server.
 /// `pg_constraint.confupdtype` and `confdeltype`, spelled out.
 fn referential_action(code: String) -> Option<String> {
     let action = match code.as_str() {
@@ -759,6 +772,7 @@ fn trigger_type(bits: i32) -> (&'static str, Vec<String>) {
     (timing, events)
 }
 
+/// "CockroachDB CCL v26.4.1 (...)" → "26.4.1"; `None` for any other server.
 fn cockroach_version(version: &str) -> Option<String> {
     let rest = version.strip_prefix("CockroachDB")?;
     Some(
@@ -767,6 +781,20 @@ fn cockroach_version(version: &str) -> Option<String> {
             .unwrap_or("")
             .to_owned(),
     )
+}
+
+/// The engine's own version where the server is a PostgreSQL derivative that
+/// reports the PostgreSQL version it builds on: YugabyteDB writes
+/// "15.12-YB-2025.2.0.0-b0", TimescaleDB is an extension with its own version.
+fn engine_version(server_version: &str, timescaledb: Option<&str>) -> String {
+    if let Some((postgres, yugabyte)) = server_version.split_once("-YB-") {
+        let yugabyte = yugabyte.split_once("-b").map_or(yugabyte, |(v, _)| v);
+        return format!("{yugabyte} (PostgreSQL {postgres})");
+    }
+    match timescaledb {
+        Some(timescaledb) => format!("{timescaledb} (PostgreSQL {server_version})"),
+        None => server_version.to_owned(),
+    }
 }
 
 /// Turns the server's text form into a typed value where the type is known.
@@ -869,6 +897,19 @@ mod unit_tests {
             cockroach_version("PostgreSQL 17.2 on aarch64-unknown-linux-musl"),
             None
         );
+    }
+
+    #[test]
+    fn names_derived_engines() {
+        assert_eq!(
+            engine_version("15.12-YB-2025.2.0.0-b0", None),
+            "2025.2.0.0 (PostgreSQL 15.12)"
+        );
+        assert_eq!(
+            engine_version("17.7 (Ubuntu 17.7-1)", Some("2.25.0")),
+            "2.25.0 (PostgreSQL 17.7 (Ubuntu 17.7-1))"
+        );
+        assert_eq!(engine_version("17.2", None), "17.2");
     }
 
     #[test]

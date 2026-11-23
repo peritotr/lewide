@@ -63,7 +63,8 @@ jobs:
       - run: scripts/test-servers.sh up && cat target/test-servers/env >> "$GITHUB_ENV"
       - run: cargo test -p dbclient-driver-postgres -p dbclient-driver-mysql -p dbclient-tunnel
 
-  # The MySQL driver against MariaDB and the PostgreSQL driver against CockroachDB.
+  # The MySQL driver against MariaDB and TiDB; the PostgreSQL driver against
+  # CockroachDB, YugabyteDB and TimescaleDB.
   compatible-engines:
     runs-on: ubuntu-22.04
     steps:
@@ -82,6 +83,21 @@ jobs:
           . target/test-servers/env.sh
           env -u DBCLIENT_TEST_TLS_CA DBCLIENT_TEST_POSTGRES_URL="$DBCLIENT_TEST_COCKROACH_URL" \
             cargo test -p dbclient-driver-postgres --test live -- --test-threads=1
+      - name: MySQL driver on TiDB
+        run: |
+          . target/test-servers/env.sh
+          env -u DBCLIENT_TEST_TLS_CA DBCLIENT_TEST_MYSQL_URL="$DBCLIENT_TEST_TIDB_URL" \
+            cargo test -p dbclient-driver-mysql --test live
+      - name: PostgreSQL driver on YugabyteDB
+        run: |
+          . target/test-servers/env.sh
+          env -u DBCLIENT_TEST_TLS_CA DBCLIENT_TEST_POSTGRES_URL="$DBCLIENT_TEST_YUGABYTE_URL" \
+            cargo test -p dbclient-driver-postgres --test live -- --test-threads=1
+      - name: PostgreSQL driver on TimescaleDB
+        run: |
+          . target/test-servers/env.sh
+          env -u DBCLIENT_TEST_TLS_CA DBCLIENT_TEST_POSTGRES_URL="$DBCLIENT_TEST_TIMESCALE_URL" \
+            cargo test -p dbclient-driver-postgres --test live
 
   # Each other engine against a throwaway container. The scripts print
   # `export NAME=value` lines; those become the job's environment.

@@ -12,8 +12,9 @@ yet. It changes as work lands.
 
 | Database | Status | Notes |
 |---|---|---|
-| PostgreSQL, CockroachDB | ✅ Supported | Browse, edit rows in a transaction, filter, change columns, import, export |
-| MySQL, MariaDB | ✅ Supported | Same views as PostgreSQL |
+| PostgreSQL, CockroachDB, YugabyteDB | ✅ Supported | Browse, edit rows in a transaction, filter, change columns, import, export |
+| TimescaleDB | ✅ Supported | Same views as PostgreSQL; hypertables open like tables, chunk and policy views not built |
+| MySQL, MariaDB, TiDB | ✅ Supported | Same views as PostgreSQL |
 | SQLite | ✅ Supported | Local files |
 | SQL Server | ✅ Supported | Changing columns and query plans are not built yet |
 | ClickHouse | ✅ Supported | Read-only grid and structure by design: its keys do not identify one row |
@@ -33,7 +34,6 @@ before every write), English and Turkish, light and dark themes.
 
 **Connection types** (order agreed one at a time):
 
-- TiDB, YugabyteDB, TimescaleDB — they speak the MySQL or PostgreSQL protocol, so mostly testing
 - Oracle, Snowflake, BigQuery, InfluxDB, Couchbase, Milvus
 
 **Finishing what exists**

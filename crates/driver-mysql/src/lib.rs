@@ -208,10 +208,11 @@ impl Connection for MysqlConnection {
 
     async fn server_version(&self) -> Result<Option<String>> {
         let mut slot = self.conn.lock().await;
-        open(&mut slot)?
+        let version: Option<String> = open(&mut slot)?
             .query_first("SELECT VERSION()")
             .await
-            .map_err(query_err)
+            .map_err(query_err)?;
+        Ok(version.map(|v| tidb_version(&v).unwrap_or(v)))
     }
 
     async fn current_namespace(&self) -> Result<Option<String>> {
@@ -227,8 +228,11 @@ impl Connection for MysqlConnection {
         let mut slot = self.conn.lock().await;
         let names: Vec<String> = open(&mut slot)?
             .query(
+                // TiDB spells its system schemas in capitals and compares
+                // them exactly, and adds METRICS_SCHEMA.
                 "SELECT schema_name FROM information_schema.schemata \
-                 WHERE schema_name NOT IN ('information_schema', 'performance_schema', 'mysql', 'sys') \
+                 WHERE LOWER(schema_name) NOT IN \
+                   ('information_schema', 'performance_schema', 'metrics_schema', 'mysql', 'sys') \
                  ORDER BY schema_name",
             )
             .await
@@ -505,9 +509,13 @@ impl Connection for MysqlConnection {
     async fn in_transaction(&self) -> Result<bool> {
         let mut slot = self.conn.lock().await;
         let conn = open(&mut slot)?;
-        // MariaDB and TiDB answer directly.
+        // MariaDB answers directly.
         if let Ok(Some(open)) = conn.query_first::<i64, _>("SELECT @@in_transaction").await {
             return Ok(open != 0);
+        }
+        // TiDB keeps the start timestamp of the open transaction, 0 when there is none.
+        if let Ok(Some(start)) = conn.query_first::<u64, _>("SELECT @@tidb_current_ts").await {
+            return Ok(start != 0);
         }
         // MySQL records it in the performance schema, which an account may not be allowed to read.
         conn.query_first::<i64, _>(
@@ -670,14 +678,60 @@ fn query_err(e: mysql_async::Error) -> Error {
     };
     Error::Database {
         code: Some(format!("{} ({})", server.code, server.state)),
-        // Syntax errors end with "... at line N"; that is all the position MySQL gives.
-        line: server
-            .message
-            .rsplit_once(" at line ")
-            .and_then(|(_, line)| line.trim().parse().ok()),
+        line: error_line(&server.message),
         message: server.message.clone(),
         position: None,
         hint: None,
         detail: None,
+    }
+}
+
+/// The line a syntax error points at. MySQL ends the message with "... at
+/// line N"; TiDB writes "... to use line N column M near ...".
+fn error_line(message: &str) -> Option<u32> {
+    if let Some((_, line)) = message.rsplit_once(" at line ") {
+        return line.trim().parse().ok();
+    }
+    let (_, rest) = message.split_once(" line ")?;
+    let (line, _) = rest.split_once(" column ")?;
+    line.parse().ok()
+}
+
+/// TiDB reports the MySQL version it imitates first: "8.0.11-TiDB-v8.5.5"
+/// becomes "8.5.5 (MySQL 8.0.11)". `None` for any other server.
+fn tidb_version(version: &str) -> Option<String> {
+    let (mysql, tidb) = version.split_once("-TiDB-")?;
+    let tidb = tidb.strip_prefix('v').unwrap_or(tidb);
+    Some(format!("{tidb} (MySQL {mysql})"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_the_line_of_a_syntax_error() {
+        assert_eq!(
+            error_line("You have an error in your SQL syntax; ... near 'WHERE' at line 3"),
+            Some(3)
+        );
+        assert_eq!(
+            error_line(
+                "You have an error in your SQL syntax; check the manual that corresponds to \
+                 your TiDB version for the right syntax to use line 3 column 6 near \"WHERE\" "
+            ),
+            Some(3)
+        );
+        assert_eq!(error_line("Table 'app.missing' doesn't exist"), None);
+    }
+
+    #[test]
+    fn names_the_tidb_version() {
+        assert_eq!(
+            tidb_version("8.0.11-TiDB-v8.5.5").as_deref(),
+            Some("8.5.5 (MySQL 8.0.11)")
+        );
+        assert_eq!(tidb_version("8.4.3"), None);
+        assert_eq!(tidb_version("11.8.2-MariaDB-ubu2404"), None);
     }
 }

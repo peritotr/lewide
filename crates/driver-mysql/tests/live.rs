@@ -44,6 +44,14 @@ async fn mariadb(conn: &dyn Connection) -> bool {
         .is_some_and(|v| v.contains("MariaDB"))
 }
 
+/// And against TiDB, whose version the driver reports as "8.5.5 (MySQL 8.0.11)".
+async fn tidb(conn: &dyn Connection) -> bool {
+    conn.server_version()
+        .await
+        .unwrap()
+        .is_some_and(|v| v.contains("(MySQL "))
+}
+
 /// Names and kinds only: row estimates vary from run to run.
 fn kinds(objects: Vec<DbObject>) -> Vec<(String, ObjectKind)> {
     objects.into_iter().map(|o| (o.name, o.kind)).collect()
@@ -220,7 +228,11 @@ async fn lists_and_describes_objects() {
 
     let namespaces = conn.list_namespaces().await.unwrap();
     assert!(namespaces.iter().any(|n| n.name == "t_meta"));
-    assert!(namespaces.iter().all(|n| n.name != "information_schema"));
+    // Whatever the engine's spelling (TiDB writes INFORMATION_SCHEMA).
+    assert!(namespaces.iter().all(|n| {
+        let name = n.name.to_lowercase();
+        !name.ends_with("_schema") && name != "mysql" && name != "sys"
+    }));
 
     assert_eq!(
         kinds(conn.list_objects(Some("t_meta")).await.unwrap()),
@@ -247,7 +259,13 @@ async fn lists_and_describes_objects() {
     assert!(!table.columns[1].primary_key);
     assert!(!table.columns[1].nullable);
     assert_eq!(table.columns[1].type_name.as_deref(), Some("decimal(10,2)"));
-    assert_eq!(table.columns[1].default_value.as_deref(), Some("0.00"));
+    // TiDB keeps the default as it was written.
+    let zero = if tidb(conn.as_ref()).await {
+        "0"
+    } else {
+        "0.00"
+    };
+    assert_eq!(table.columns[1].default_value.as_deref(), Some(zero));
     assert!(table.columns[2].nullable);
     assert_eq!(table.columns[2].type_name.as_deref(), Some("varchar(40)"));
 
@@ -569,8 +587,16 @@ async fn lists_indexes() {
 #[tokio::test]
 async fn describes_the_structure_of_a_table() {
     let conn = connect_or_skip!();
+    // TiDB has no triggers.
+    let tidb = tidb(conn.as_ref()).await;
+    let trigger = if tidb {
+        ""
+    } else {
+        "CREATE TRIGGER t_struct.orders_touch BEFORE UPDATE ON t_struct.orders
+             FOR EACH ROW SET NEW.total = NEW.total;"
+    };
     conn.execute(query(
-        "DROP DATABASE IF EXISTS t_struct; DROP DATABASE IF EXISTS t_struct_ref;
+        &format!("DROP DATABASE IF EXISTS t_struct; DROP DATABASE IF EXISTS t_struct_ref;
          CREATE DATABASE t_struct; CREATE DATABASE t_struct_ref;
          CREATE TABLE t_struct_ref.regions (country varchar(8), code varchar(8), PRIMARY KEY (country, code));
          CREATE TABLE t_struct.users (id int PRIMARY KEY, email varchar(80) NOT NULL);
@@ -583,9 +609,8 @@ async fn describes_the_structure_of_a_table() {
              CONSTRAINT orders_region_fk FOREIGN KEY (country, region)
                  REFERENCES t_struct_ref.regions (country, code) ON UPDATE SET NULL
          );
-         CREATE TRIGGER t_struct.orders_touch BEFORE UPDATE ON t_struct.orders
-             FOR EACH ROW SET NEW.total = NEW.total;
-         CREATE VIEW t_struct.big_orders AS SELECT id, total FROM t_struct.orders WHERE total > 100;",
+         {trigger}
+         CREATE VIEW t_struct.big_orders AS SELECT id, total FROM t_struct.orders WHERE total > 100;"),
         None,
     ))
     .await
@@ -613,12 +638,16 @@ async fn describes_the_structure_of_a_table() {
     assert_eq!(keys[1].referenced_columns, ["id"]);
     assert_eq!(keys[1].on_delete.as_deref(), Some("CASCADE"));
 
-    assert_eq!(structure.triggers.len(), 1, "{:?}", structure.triggers);
-    let trigger = &structure.triggers[0];
-    assert_eq!(trigger.name, "orders_touch");
-    assert_eq!(trigger.timing.as_deref(), Some("BEFORE"));
-    assert_eq!(trigger.events, ["UPDATE"]);
-    assert!(trigger.definition.as_deref().unwrap().contains("NEW.total"));
+    if tidb {
+        assert!(structure.triggers.is_empty());
+    } else {
+        assert_eq!(structure.triggers.len(), 1, "{:?}", structure.triggers);
+        let trigger = &structure.triggers[0];
+        assert_eq!(trigger.name, "orders_touch");
+        assert_eq!(trigger.timing.as_deref(), Some("BEFORE"));
+        assert_eq!(trigger.events, ["UPDATE"]);
+        assert!(trigger.definition.as_deref().unwrap().contains("NEW.total"));
+    }
 
     let ddl = structure.ddl.unwrap();
     assert!(ddl.starts_with("CREATE TABLE `orders`"), "{ddl}");

@@ -48,8 +48,9 @@ MongoDB Compass, RedisInsight, Neo4j Browser and Kibana Dev Tools, LewIDE puts t
 
 | | Database | What you get |
 |---|---|---|
-| ![PostgreSQL](https://img.shields.io/badge/-PostgreSQL-4169E1?logo=postgresql&logoColor=white) | PostgreSQL, CockroachDB | Data grid with editing, filters, structure and column changes, import, export, query plans |
-| ![MySQL](https://img.shields.io/badge/-MySQL-4479A1?logo=mysql&logoColor=white) | MySQL, MariaDB | The same |
+| ![PostgreSQL](https://img.shields.io/badge/-PostgreSQL-4169E1?logo=postgresql&logoColor=white) | PostgreSQL, CockroachDB, YugabyteDB | Data grid with editing, filters, structure and column changes, import, export, query plans |
+| ![TimescaleDB](https://img.shields.io/badge/-TimescaleDB-FDB515?logo=timescale&logoColor=black) | TimescaleDB | The same; hypertables open like tables |
+| ![MySQL](https://img.shields.io/badge/-MySQL-4479A1?logo=mysql&logoColor=white) | MySQL, MariaDB, TiDB | The same |
 | ![SQLite](https://img.shields.io/badge/-SQLite-003B57?logo=sqlite&logoColor=white) | SQLite | The same, on a local file |
 | ![SQL Server](https://img.shields.io/badge/-SQL%20Server-CC2927) | Microsoft SQL Server | Data grid with editing, structure |
 | ![ClickHouse](https://img.shields.io/badge/-ClickHouse-FFCC01?logo=clickhouse&logoColor=black) | ClickHouse | Fast queries with cancel, structure, import |
@@ -61,7 +62,7 @@ MongoDB Compass, RedisInsight, Neo4j Browser and Kibana Dev Tools, LewIDE puts t
 | ![pgvector](https://img.shields.io/badge/-pgvector-4169E1?logo=postgresql&logoColor=white) | pgvector | Vector search on PostgreSQL tables, with SQL beside it |
 | ![Neo4j](https://img.shields.io/badge/-Neo4j-4581C3?logo=neo4j&logoColor=white) | Neo4j | Cypher with a graph canvas, a table and text |
 
-More are on the way: TiDB, YugabyteDB, TimescaleDB, Oracle, Snowflake, BigQuery and others. See the [roadmap](ROADMAP.md).
+More are on the way: Milvus, InfluxDB, Couchbase, Oracle, Snowflake, BigQuery and others. See the [roadmap](ROADMAP.md).
 
 ## A closer look
 

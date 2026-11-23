@@ -48,6 +48,12 @@ async fn cockroach(conn: &dyn Connection) -> bool {
     matches!(&version.rows[0][0], Value::Text(text) if text.starts_with("CockroachDB"))
 }
 
+/// And against YugabyteDB, whose version reads "PostgreSQL 15.12-YB-…".
+async fn yugabyte(conn: &dyn Connection) -> bool {
+    let version = conn.execute(query("SELECT version()", None)).await.unwrap();
+    matches!(&version.rows[0][0], Value::Text(text) if text.contains("-YB-"))
+}
+
 /// Names and kinds only: row estimates vary from run to run.
 fn kinds(objects: Vec<DbObject>) -> Vec<(String, ObjectKind)> {
     objects.into_iter().map(|o| (o.name, o.kind)).collect()
@@ -289,8 +295,16 @@ async fn cancel_interrupts_a_running_statement() {
         let conn = conn.clone();
         tokio::spawn(async move { conn.execute(query("SELECT pg_sleep(30)", None)).await })
     };
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    conn.cancel().await.unwrap();
+    // A cancel that arrives before the statement has started is ignored by the
+    // server, which happens on a busy one (YugabyteDB in CI), so it is repeated
+    // until the statement ends.
+    for _ in 0..10 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        if runner.is_finished() {
+            break;
+        }
+        conn.cancel().await.unwrap();
+    }
 
     let outcome = runner.await.unwrap();
     // query_canceled
@@ -847,6 +861,12 @@ async fn a_killed_session_is_not_alive_but_a_failed_statement_is() {
         eprintln!("skipped: uses pg_terminate_backend, which CockroachDB does not have");
         return;
     }
+    // YugabyteDB treats a terminated backend as a crash and restarts every
+    // session, which would break the tests running next to this one.
+    if yugabyte(killer.as_ref()).await {
+        eprintln!("skipped: pg_terminate_backend restarts the whole YugabyteDB server");
+        return;
+    }
     let pid = victim
         .execute(query("SELECT pg_backend_pid()", None))
         .await
@@ -1029,7 +1049,13 @@ async fn reads_comments_enums_index_details_and_referencing_keys() {
     let primary = orders.indexes.iter().find(|i| i.primary).unwrap();
     assert_eq!(primary.condition, None);
     if !cockroach {
-        assert_eq!(primary.method.as_deref(), Some("btree"));
+        // YugabyteDB stores its indexes as LSM trees.
+        let method = if yugabyte(conn.as_ref()).await {
+            "lsm"
+        } else {
+            "btree"
+        };
+        assert_eq!(primary.method.as_deref(), Some(method));
         assert!(primary.size.is_some());
     }
 
@@ -1047,6 +1073,76 @@ async fn reads_comments_enums_index_details_and_referencing_keys() {
     assert!(orders.referenced_by.is_empty());
 
     conn.execute(query("DROP SCHEMA t_meta2 CASCADE", None))
+        .await
+        .unwrap();
+}
+
+/// TimescaleDB only: a hypertable is an ordinary table to the client, and the
+/// extension's own schemas (where the chunks live) stay out of the list.
+#[tokio::test]
+async fn timescaledb_hypertables_read_like_tables() {
+    use dbclient_core::TableRequest;
+    let conn = connect_or_skip!();
+    let installed = conn
+        .execute(query(
+            "SELECT count(*) FROM pg_extension WHERE extname = 'timescaledb'",
+            None,
+        ))
+        .await
+        .unwrap();
+    if installed.rows[0][0] != Value::Int(1) {
+        eprintln!("skipped: the server is not TimescaleDB");
+        return;
+    }
+    conn.execute(query(
+        "DROP SCHEMA IF EXISTS t_ts CASCADE; CREATE SCHEMA t_ts;
+         CREATE TABLE t_ts.metrics (at timestamptz NOT NULL, device int NOT NULL, value float8,
+                                    PRIMARY KEY (device, at));
+         SELECT create_hypertable('t_ts.metrics', by_range('at', INTERVAL '1 day'));
+         INSERT INTO t_ts.metrics
+             SELECT TIMESTAMPTZ '2026-01-01' + n * INTERVAL '6 hours', n % 3, n
+             FROM generate_series(0, 39) AS n;",
+        None,
+    ))
+    .await
+    .unwrap();
+
+    let version = conn.server_version().await.unwrap().unwrap();
+    assert!(version.contains("(PostgreSQL "), "{version}");
+
+    let namespaces = conn.list_namespaces().await.unwrap();
+    assert!(namespaces.iter().any(|n| n.name == "t_ts"));
+    assert!(
+        namespaces.iter().all(|n| !n.name.contains("timescaledb")),
+        "{namespaces:?}"
+    );
+    assert_eq!(
+        kinds(conn.list_objects(Some("t_ts")).await.unwrap()),
+        vec![("metrics".to_string(), ObjectKind::Table)]
+    );
+
+    // Rows come back across chunks, in key order, with the key marked.
+    let page = conn
+        .fetch_rows(TableRequest {
+            namespace: Some("t_ts".into()),
+            table: "metrics".into(),
+            offset: 0,
+            limit: 50,
+            order_by: vec![],
+            filter: Some("value >= 30".into()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(page.rows.len(), 10);
+    assert!(page.columns[0].primary_key && page.columns[1].primary_key);
+    assert_eq!(
+        conn.count_rows(Some("t_ts"), "metrics", None)
+            .await
+            .unwrap(),
+        40
+    );
+
+    conn.execute(query("DROP SCHEMA t_ts CASCADE", None))
         .await
         .unwrap();
 }

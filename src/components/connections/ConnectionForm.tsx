@@ -529,12 +529,12 @@ export function ConnectionForm({ driverId, engine, editId, initial }: { driverId
                   {/* Fields an engine does not use are left out, and the grid closes up. */}
                   {fields.database && (
                     <Field label={t(fields.database.label)} helper={fields.database.helper && t(fields.database.helper)}>
-                      <TextInput mono inputMode={driver.id === "redis" ? "numeric" : undefined} placeholder={fields.database.placeholder} {...text("database")} />
+                      <TextInput mono inputMode={driver.id === "redis" ? "numeric" : undefined} placeholder={type.database ?? fields.database.placeholder} {...text("database")} />
                     </Field>
                   )}
                   {fields.user && (
                     <Field label={t("User")}>
-                      <TextInput mono {...text("user")} />
+                      <TextInput mono placeholder={type.user} {...text("user")} />
                     </Field>
                   )}
                   <div className="flex flex-col gap-s2">

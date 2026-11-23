@@ -4,7 +4,7 @@
 #   and an SSH server on the same Docker network for the tunnel tests.
 #
 #   scripts/test-servers.sh up     start everything, write target/test-servers/env.sh
-#   scripts/test-servers.sh compat start MariaDB and CockroachDB too (run after "up")
+#   scripts/test-servers.sh compat start MariaDB, CockroachDB, TiDB, YugabyteDB and TimescaleDB too (run after "up")
 #   scripts/test-servers.sh down   remove the containers and the network
 #
 # Load the variables with:  . target/test-servers/env.sh
@@ -19,9 +19,12 @@ MYSQL=dbclient-test-mysql
 SSH=dbclient-test-ssh
 MARIADB=dbclient-test-mariadb
 COCKROACH=dbclient-test-cockroach
+TIDB=dbclient-test-tidb
+YUGABYTE=dbclient-test-yugabyte
+TIMESCALE=dbclient-test-timescale
 
 down() {
-  docker rm -f "$PG" "$MYSQL" "$SSH" "$MARIADB" "$COCKROACH" >/dev/null 2>&1 || true
+  docker rm -f "$PG" "$MYSQL" "$SSH" "$MARIADB" "$COCKROACH" "$TIDB" "$YUGABYTE" "$TIMESCALE" >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
 }
 
@@ -136,30 +139,57 @@ ENV
   echo "servers are up; load the variables with: . $OUT/env.sh" >&2
 }
 
-# MariaDB speaks the MySQL protocol and CockroachDB the PostgreSQL one. The
-# driver suites run against them too, to show the drivers serve those engines:
+# MariaDB and TiDB speak the MySQL protocol; CockroachDB, YugabyteDB and
+# TimescaleDB the PostgreSQL one. The driver suites run against them too, to
+# show the drivers serve those engines:
 #   DBCLIENT_TEST_MYSQL_URL=$DBCLIENT_TEST_MARIADB_URL cargo test -p dbclient-driver-mysql --test live
+#   DBCLIENT_TEST_MYSQL_URL=$DBCLIENT_TEST_TIDB_URL cargo test -p dbclient-driver-mysql --test live
 #   DBCLIENT_TEST_POSTGRES_URL=$DBCLIENT_TEST_COCKROACH_URL cargo test -p dbclient-driver-postgres --test live -- --test-threads=1
-# (CockroachDB rejects schema changes that overlap, so its run is not parallel.)
+#   DBCLIENT_TEST_POSTGRES_URL=$DBCLIENT_TEST_YUGABYTE_URL cargo test -p dbclient-driver-postgres --test live -- --test-threads=1
+#   DBCLIENT_TEST_POSTGRES_URL=$DBCLIENT_TEST_TIMESCALE_URL cargo test -p dbclient-driver-postgres --test live
+# (CockroachDB and YugabyteDB reject schema changes that overlap, so their runs are not parallel.)
 compat() {
   [ -f "$OUT/env" ] || { echo "run \"$0 up\" first" >&2; exit 1; }
-  docker rm -f "$MARIADB" "$COCKROACH" >/dev/null 2>&1 || true
+  docker rm -f "$MARIADB" "$COCKROACH" "$TIDB" "$YUGABYTE" "$TIMESCALE" >/dev/null 2>&1 || true
   docker run -d --name "$MARIADB" -e MARIADB_ROOT_PASSWORD=test -e MARIADB_DATABASE=app \
     -p 127.0.0.1::3306 mariadb:11 >/dev/null
   # No authentication and no TLS: for tests on this machine only.
   docker run -d --name "$COCKROACH" -p 127.0.0.1::26257 cockroachdb/cockroach:latest \
     start-single-node --insecure >/dev/null
+  # A single TiDB server with its built-in storage; root starts without a password.
+  docker run -d --name "$TIDB" -p 127.0.0.1::4000 pingcap/tidb:v8.5.5 >/dev/null
+  # yugabyted turns authentication on when YSQL_PASSWORD is set. Capped at 4 GB
+  # (2 GB was killed for memory during the suite). On a busy machine its
+  # clock checks fail and it stops itself, so they are relaxed. It also stops
+  # when the disk is nearly full.
+  docker run -d --name "$YUGABYTE" --memory=4g -p 127.0.0.1::5433 \
+    -e YSQL_PASSWORD=test yugabytedb/yugabyte:2025.2.0.0-b131 \
+    bin/yugabyted start --background=false \
+    --master_flags=max_clock_skew_usec=5000000 \
+    --tserver_flags=max_clock_skew_usec=5000000 >/dev/null
+  docker run -d --name "$TIMESCALE" -e POSTGRES_PASSWORD=test -p 127.0.0.1::5432 \
+    timescale/timescaledb:2.25.0-pg17 >/dev/null
   wait_for "$MARIADB" docker exec "$MARIADB" mariadb -uroot -ptest -e 'select 1' app
   wait_for "$COCKROACH" docker exec "$COCKROACH" ./cockroach sql --insecure -e 'select 1'
+  wait_for "$TIDB" docker run --rm --network container:"$TIDB" mysql:8.4 \
+    mysql -h 127.0.0.1 -P 4000 -uroot -e 'select 1'
+  docker run --rm --network container:"$TIDB" mysql:8.4 mysql -h 127.0.0.1 -P 4000 -uroot \
+    -e "ALTER USER 'root'@'%' IDENTIFIED BY 'test'; CREATE DATABASE IF NOT EXISTS app" >/dev/null
+  wait_for "$YUGABYTE" docker exec -e PGPASSWORD=test "$YUGABYTE" \
+    bin/ysqlsh -h "$(docker exec "$YUGABYTE" hostname)" -U yugabyte -c 'select 1'
+  wait_for "$TIMESCALE" docker exec "$TIMESCALE" psql -U postgres -h 127.0.0.1 -c 'select 1'
 
-  grep -v -e MARIADB -e COCKROACH "$OUT/env" > "$OUT/env.tmp"
+  grep -v -e MARIADB -e COCKROACH -e TIDB -e YUGABYTE -e TIMESCALE "$OUT/env" > "$OUT/env.tmp"
   cat >> "$OUT/env.tmp" <<ENV
 DBCLIENT_TEST_MARIADB_URL=mysql://root:test@127.0.0.1:$(port "$MARIADB" 3306)/app
 DBCLIENT_TEST_COCKROACH_URL=postgres://root@127.0.0.1:$(port "$COCKROACH" 26257)/defaultdb
+DBCLIENT_TEST_TIDB_URL=mysql://root:test@127.0.0.1:$(port "$TIDB" 4000)/app
+DBCLIENT_TEST_YUGABYTE_URL=postgres://yugabyte:test@127.0.0.1:$(port "$YUGABYTE" 5433)/yugabyte
+DBCLIENT_TEST_TIMESCALE_URL=postgres://postgres:test@127.0.0.1:$(port "$TIMESCALE" 5432)/postgres
 ENV
   mv "$OUT/env.tmp" "$OUT/env"
   sed -e "s/'/'\\\\''/g" -e "s/^\([A-Z_]*\)=\(.*\)$/export \1='\2'/" "$OUT/env" > "$OUT/env.sh"
-  echo "MariaDB and CockroachDB are up; variables added to $OUT/env.sh" >&2
+  echo "MariaDB, CockroachDB, TiDB, YugabyteDB and TimescaleDB are up; variables added to $OUT/env.sh" >&2
 }
 
 case "${1:-}" in
