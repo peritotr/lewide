@@ -391,6 +391,8 @@ function AskDialog({ ask, production, onClose }: { ask: Ask; production: boolean
             <TextInput
               mono
               data-autofocus={i === 0 ? "" : undefined}
+              // A filled-in value (the current name, the current TTL) is selected, so typing replaces it.
+              onFocus={(e) => e.currentTarget.select()}
               placeholder={field.placeholder}
               value={values[i]}
               invalid={!!error && i === ask.fields.length - 1}
