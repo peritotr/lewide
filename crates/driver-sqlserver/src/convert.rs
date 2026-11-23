@@ -161,6 +161,10 @@ pub fn stands_alone(batch: &str) -> bool {
         .map(str::to_ascii_uppercase)
         .collect();
     let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    // SET SHOWPLAN_* must be the only statement of its batch.
+    if matches!(words.as_slice(), ["SET", option, ..] if option.starts_with("SHOWPLAN_")) {
+        return true;
+    }
     let rest = match words.as_slice() {
         ["CREATE", "OR", "ALTER", rest @ ..] | ["CREATE" | "ALTER", rest @ ..] => rest,
         _ => return false,

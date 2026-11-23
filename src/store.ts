@@ -1049,7 +1049,22 @@ export async function explain(tabId: string, sql: string) {
   const text = (result: QueryResult | undefined) => (result ? result.rows.map((row) => row.map(displayValue).join("  ")).join("\n") : "");
   const state: PlanState = { statement, raw: "", plan: null, error: null };
   if (conn.driver.id === "sqlserver") {
-    state.error = t("Query plans are not available for SQL Server yet.");
+    // SHOWPLAN_TEXT compiles without running. The driver runs the three
+    // batches under one lock, so nothing else lands between ON and OFF.
+    try {
+      const sets = await api.runQuery(session, `SET SHOWPLAN_TEXT ON\nGO\n${statement}\nGO\nSET SHOWPLAN_TEXT OFF`);
+      // Each statement gives its text, then its plan; the driver's own row count query is left out.
+      state.raw = sets
+        .filter((set) => set.columns[0]?.name === "StmtText")
+        .map((set) => text(set))
+        .filter((block) => block && !block.includes("__lewide_rowcount"))
+        .join("\n\n");
+    } catch (e) {
+      noteIfLost(conn.id, e);
+      state.error = errorMessage(e);
+      // A statement that fails to compile leaves the session in plan mode.
+      await api.runQuery(session, "SET SHOWPLAN_TEXT OFF").catch(() => {});
+    }
     patchTab(tabId, { plan: state, view: "plan" });
     return;
   }

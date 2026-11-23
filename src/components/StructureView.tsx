@@ -58,7 +58,7 @@ const Cell = ({ children, className = "", title }: { children: ReactNode; classN
 );
 
 export function StructureView({ tab, view, conn, isView }: { tab: Tab; view: View; conn: Conn | null; isView: boolean }) {
-  const noAlter = conn?.driver.id === "sqlserver" || conn?.driver.id === "clickhouse";
+  const noAlter = conn?.driver.id === "clickhouse";
   const state = view.structure;
   const data = state?.state === "ready" ? state.data : null;
   const tabs: { id: StructureTab; label: string; count: number | null; add?: string }[] = isView
@@ -148,7 +148,7 @@ function Columns({ tab, view, data, isView, driver, adding, onAdded }: { tab: Ta
   const [editing, setEditing] = useState<{ key: string; draft: ColumnDef } | null>(null);
   const [nextId, setNextId] = useState(1);
   // T-SQL changes columns differently (sp_rename, named default constraints); agreed to come later.
-  const locked = isView || driver === "sqlserver" || driver === "clickhouse" || view.structureApply.state === "running";
+  const locked = isView || driver === "clickhouse" || view.structureApply.state === "running";
 
   useEffect(() => {
     if (adding === null) return;
@@ -635,7 +635,7 @@ function Ddl({ data, conn, isView }: { data: TableStructure; conn: Conn | null; 
     <div className="flex min-h-full flex-col">
       <Strip kind="neutral" icon={<Lock size={13} />} className="items-center border-x-0 border-t-0">
         <div className="flex items-center gap-s4">
-          <span className="min-w-0 flex-1">{isView || conn?.driver.id === "sqlserver" || conn?.driver.id === "clickhouse" ? t("Read-only. Generated from the catalog.") : t("Read-only. Generated from the catalog; edit the table in the other tabs.")}</span>
+          <span className="min-w-0 flex-1">{isView || conn?.driver.id === "clickhouse" ? t("Read-only. Generated from the catalog.") : t("Read-only. Generated from the catalog; edit the table in the other tabs.")}</span>
           <button type="button" className={linkButton} onClick={() => void navigator.clipboard?.writeText(data.ddl!)}>
             {t("Copy")}
           </button>

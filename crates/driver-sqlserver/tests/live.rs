@@ -675,3 +675,130 @@ async fn route_and_close() {
     assert!(!conn.is_alive().await);
     assert!(matches!(conn.ping().await, Err(Error::ConnectionLost(_))));
 }
+
+#[tokio::test]
+async fn changes_columns_with_t_sql() {
+    use dbclient_core::structure::{ColumnChange, ColumnDef, apply_on, statements};
+    let conn = connect_or_skip!();
+    fresh_schema(conn.as_ref(), "lw_alter").await;
+    conn.execute_all(query(
+        "CREATE TABLE lw_alter.items (id int PRIMARY KEY, note nvarchar(20) NULL DEFAULT N'x', old int NOT NULL DEFAULT 0);\n\
+         INSERT INTO lw_alter.items (id) VALUES (1)",
+        None,
+    ))
+    .await
+    .unwrap();
+    let column =
+        |name: &str, type_name: &str, nullable: bool, default_value: Option<&str>| ColumnDef {
+            name: name.into(),
+            type_name: type_name.into(),
+            nullable,
+            default_value: default_value.map(str::to_owned),
+        };
+    let changes = [
+        // A column with a default constraint can be dropped.
+        ColumnChange::Drop {
+            column: "old".into(),
+        },
+        // Renamed, widened, made NOT NULL and given another default.
+        ColumnChange::Modify {
+            from: column("note", "nvarchar(20)", true, Some("N'x'")),
+            to: column("remark", "nvarchar(200)", false, Some("N'Çağrı'")),
+        },
+        ColumnChange::Add {
+            column: column("qty", "int", false, Some("5")),
+        },
+    ];
+    let table = conn.qualified(Some("lw_alter"), "items");
+    let list = statements(conn.dialect(), &table, &changes).unwrap();
+    apply_on(conn.as_ref(), list).await.unwrap();
+
+    let description = conn
+        .describe_object(Some("lw_alter"), "items")
+        .await
+        .unwrap();
+    let columns: Vec<(&str, Option<&str>, bool, Option<&str>)> = description
+        .columns
+        .iter()
+        .map(|c| {
+            (
+                c.name.as_str(),
+                c.type_name.as_deref(),
+                c.nullable,
+                c.default_value.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(columns[0].0, "id");
+    assert_eq!(
+        columns[1],
+        ("remark", Some("nvarchar(200)"), false, Some("N'Çağrı'"))
+    );
+    assert_eq!(columns[2], ("qty", Some("int"), false, Some("5")));
+    assert_eq!(columns.len(), 3);
+    // The old default stays on the row that had it; a new row gets the new one.
+    let rows = conn
+        .execute(query(
+            "INSERT INTO lw_alter.items (id) VALUES (2);\nSELECT remark, qty FROM lw_alter.items ORDER BY id",
+            None,
+        ))
+        .await
+        .unwrap()
+        .rows;
+    assert_eq!(rows[0], [Value::Text("x".into()), Value::Int(5)]);
+    assert_eq!(rows[1], [Value::Text("Çağrı".into()), Value::Int(5)]);
+    assert!(!conn.in_transaction().await.unwrap());
+}
+
+#[tokio::test]
+async fn shows_a_plan_without_running_the_statement() {
+    let conn = connect_or_skip!();
+    fresh_schema(conn.as_ref(), "lw_plan").await;
+    conn.execute_all(query(
+        "CREATE TABLE lw_plan.t (id int PRIMARY KEY, v int)",
+        None,
+    ))
+    .await
+    .unwrap();
+    let sets = conn
+        .execute_all(query(
+            "SET SHOWPLAN_TEXT ON\nGO\nDELETE FROM lw_plan.t WHERE v > 1\nGO\nSET SHOWPLAN_TEXT OFF",
+            None,
+        ))
+        .await
+        .unwrap();
+    let text: Vec<String> = sets
+        .iter()
+        .filter(|s| s.columns.first().is_some_and(|c| c.name == "StmtText"))
+        .flat_map(|s| s.rows.iter().map(|r| format!("{:?}", r[0])))
+        .collect();
+    assert!(text.iter().any(|l| l.contains("Delete")), "{text:?}");
+    // The plan mode is off again, and nothing was deleted or run.
+    let rows = conn.execute(query("SELECT 1 AS one", None)).await.unwrap();
+    assert_eq!(rows.rows, [[Value::Int(1)]]);
+}
+
+#[tokio::test]
+async fn stop_ends_the_running_request_and_keeps_the_connection() {
+    let conn = connect_or_skip!();
+    let started = std::time::Instant::now();
+    let (waited, stopped) = tokio::join!(
+        conn.execute(query("WAITFOR DELAY '00:00:30'", None)),
+        async {
+            tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+            conn.cancel().await
+        }
+    );
+    stopped.unwrap();
+    let Err(Error::Query(message)) = waited else {
+        panic!("a stopped request must fail");
+    };
+    assert!(message.contains("stopped"), "{message}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    // The driver opened a new session: the connection still works.
+    let rows = conn.execute(query("SELECT 2 AS two", None)).await.unwrap();
+    assert_eq!(rows.rows, [[Value::Int(2)]]);
+    // With nothing running, Stop does nothing.
+    conn.cancel().await.unwrap();
+    assert!(conn.is_alive().await);
+}

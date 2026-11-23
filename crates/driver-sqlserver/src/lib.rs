@@ -4,9 +4,15 @@
 //! Server's own tools do. The result stream does not carry row counts, so a
 //! batch that may change rows is followed by `SELECT @@ROWCOUNT`, read back
 //! under a reserved column name and not shown.
+//!
+//! Stop: tiberius cannot send TDS's attention signal, so a running request is
+//! stopped with `KILL <session id>` from a second, short connection. That ends
+//! the server session (an open transaction is rolled back); the driver then
+//! opens a new one, so the connection stays usable.
 
 mod convert;
 
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -42,6 +48,7 @@ impl Driver for SqlServerDriver {
                 sql: true,
                 schemas: true,
                 transactions: true,
+                cancel: true,
                 tls: true,
                 ..Capabilities::default()
             },
@@ -51,6 +58,21 @@ impl Driver for SqlServerDriver {
     }
 
     async fn connect(&self, config: &ConnectionConfig) -> Result<Box<dyn Connection>> {
+        let mut client = open(config).await?;
+        let spid = session_id(&mut client).await?;
+        Ok(Box::new(SqlServerConnection {
+            client: Mutex::new(Some(client)),
+            config: config.clone(),
+            spid: AtomicI32::new(spid),
+            running: AtomicBool::new(false),
+            killed: AtomicBool::new(false),
+        }))
+    }
+}
+
+/// A logged-in session for `config`.
+async fn open(config: &ConnectionConfig) -> Result<Session> {
+    {
         let host = config
             .host
             .clone()
@@ -116,10 +138,21 @@ impl Driver for SqlServerDriver {
         .await
         .map_err(|_| Error::Connect("the server did not finish the login".into()))?
         .map_err(connect_err)?;
-        Ok(Box::new(SqlServerConnection {
-            client: Mutex::new(Some(client)),
-        }))
+        Ok(client)
     }
+}
+
+/// The server's id of this session, which `KILL` takes.
+async fn session_id(client: &mut Session) -> Result<i32> {
+    let row = client
+        .simple_query("SELECT CAST(@@SPID AS int)")
+        .await
+        .map_err(|e| query_err(e, 0))?
+        .into_row()
+        .await
+        .map_err(|e| query_err(e, 0))?;
+    row.and_then(|r| r.try_get::<i32, _>(0).ok().flatten())
+        .ok_or_else(|| Error::Connect("the server did not say its session id".into()))
 }
 
 type Session = Client<Compat<TcpStream>>;
@@ -127,6 +160,13 @@ type Session = Client<Compat<TcpStream>>;
 struct SqlServerConnection {
     /// `None` once closed. Requests take turns: a TDS connection carries one at a time.
     client: Mutex<Option<Session>>,
+    /// For the second connection that stops a request, and for opening a new session after it.
+    config: ConnectionConfig,
+    spid: AtomicI32,
+    /// Statements from the editor are running.
+    running: AtomicBool,
+    /// Stop ended the session; the next failure is that, not the server's error.
+    killed: AtomicBool,
 }
 
 impl SqlServerConnection {
@@ -167,7 +207,7 @@ impl SqlServerConnection {
     }
 
     async fn run_batch(
-        &self,
+        client: &mut Session,
         text: &str,
         line_offset: u32,
         max_rows: Option<usize>,
@@ -182,8 +222,6 @@ impl SqlServerConnection {
             text.to_owned()
         };
 
-        let mut guard = self.client.lock().await;
-        let client = guard.as_mut().ok_or_else(closed)?;
         let mut stream = client
             .simple_query(statement)
             .await
@@ -287,14 +325,37 @@ impl Connection for SqlServerConnection {
         if pieces.is_empty() {
             return Err(Error::Query("no statement to run".into()));
         }
+        // One lock for all batches: nothing else runs between them, which a
+        // `SET SHOWPLAN_TEXT ON` … `OFF` sequence depends on.
+        let mut guard = self.client.lock().await;
+        let client = guard.as_mut().ok_or_else(closed)?;
+        self.running.store(true, Ordering::SeqCst);
         let mut out = Vec::new();
+        let mut failure = None;
         for batch in pieces {
-            out.extend(
-                self.run_batch(batch.text, batch.line_offset, request.max_rows)
-                    .await?,
-            );
+            match Self::run_batch(client, batch.text, batch.line_offset, request.max_rows).await {
+                Ok(sets) => out.extend(sets),
+                Err(error) => {
+                    failure = Some(error);
+                    break;
+                }
+            }
         }
-        Ok(out)
+        self.running.store(false, Ordering::SeqCst);
+        if self.killed.swap(false, Ordering::SeqCst) {
+            // Stop ended the session: open another in its place.
+            let mut fresh = open(&self.config).await?;
+            self.spid
+                .store(session_id(&mut fresh).await?, Ordering::SeqCst);
+            *guard = Some(fresh);
+            return Err(Error::Query(
+                "stopped: the server session was ended and a new one opened; an open transaction was rolled back".into(),
+            ));
+        }
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(out),
+        }
     }
 
     async fn server_version(&self) -> Result<Option<String>> {
@@ -645,6 +706,28 @@ impl Connection for SqlServerConnection {
             return Err(Error::Query("a transaction is open on this connection; commit or roll it back before applying changes".into()));
         }
         dbclient_core::edit::apply_on(self, changes).await
+    }
+
+    /// Ends the session of the running request from a second connection; see
+    /// the module notes. Nothing happens when no statement is running.
+    async fn cancel(&self) -> Result<()> {
+        if !self.running.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        let spid = self.spid.load(Ordering::SeqCst);
+        let mut other = open(&self.config).await?;
+        self.killed.store(true, Ordering::SeqCst);
+        let killed = match other.simple_query(format!("KILL {spid}")).await {
+            // The reply has no rows; it is read to the end before the close.
+            Ok(stream) => stream.into_results().await.map(|_| ()),
+            Err(error) => Err(error),
+        };
+        let _ = other.close().await;
+        if let Err(error) = killed {
+            self.killed.store(false, Ordering::SeqCst);
+            return Err(query_err(error, 0));
+        }
+        Ok(())
     }
 
     async fn close(&self) -> Result<()> {

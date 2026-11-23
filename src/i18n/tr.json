@@ -683,7 +683,6 @@
   "Query cancelled": "Sorgu iptal edildi",
   "Query DSL, a {\"field\": value} shorthand, or query string text such as city:İzmir AND year:>2023": "Query DSL, {\"field\": value} kısaltması ya da city:İzmir AND year:>2023 gibi bir query string metni",
   "Query plan": "Sorgu planı",
-  "Query plans are not available for SQL Server yet.": "SQL Server için sorgu planı henüz yok.",
   "Query saved": "Sorgu kaydedildi",
   "Raise graph limit…": "Grafik sınırını yükselt…",
   "Raise the limit in the toolbar to fetch more on the next run.": "Sonraki çalıştırmada daha fazlasını almak için araç çubuğundan sınırı yükseltin.",

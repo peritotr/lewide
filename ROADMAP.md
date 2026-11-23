@@ -16,14 +16,14 @@ yet. It changes as work lands.
 | TimescaleDB | ✅ Supported | Same views as PostgreSQL; hypertables open like tables, chunk and policy views not built |
 | MySQL, MariaDB, TiDB | ✅ Supported | Same views as PostgreSQL |
 | SQLite | ✅ Supported | Local files |
-| SQL Server | ✅ Supported | Changing columns and query plans are not built yet |
+| SQL Server | ✅ Supported | Changing columns, query plans and Stop; Windows sign-in and named instances not built |
 | ClickHouse | ✅ Supported | Read-only grid and structure by design: its keys do not identify one row |
 | Redis, Valkey | ✅ Supported | Key browser and editors for every core type, TLS |
 | MongoDB | ✅ Supported | Documents as tree, table or JSON; in-place edits |
 | Elasticsearch, OpenSearch | ✅ Supported | Indices in the document view: Query DSL, field shorthand or query string; edits; Dev Tools requests in query tabs |
 | pgvector | ✅ Supported | Tables with a vector column searched like a vector database; SQL as usual |
 | Qdrant | ✅ Supported | Vector search with payload filters; search by text needs an embedding provider |
-| Neo4j | ✅ Supported | Graph canvas, table and text views; Cypher highlighting still to come |
+| Neo4j | ✅ Supported | Graph canvas, table and text views; Cypher editor with Explain, Format and Save |
 | Milvus | ✅ Supported | Vector search with filters and named vectors; read-only |
 | InfluxDB 3 | ✅ Supported | SQL over time series; read-only grid (InfluxDB is written with line protocol) |
 | Couchbase | ✅ Supported | Documents by bucket and collection, edited in place; SQL++ in query tabs |
@@ -41,8 +41,7 @@ before every write), English and Turkish, light and dark themes.
 
 **Finishing what exists**
 
-- Changing columns on SQL Server and ClickHouse; editing indexes, foreign keys and triggers everywhere
-- Query plans for SQL Server; Cypher highlighting, Explain and Save for Neo4j
+- Changing columns on ClickHouse; editing indexes, foreign keys and triggers everywhere
 - Text search for vector databases through an embedding provider
 - Excel import and export
 - Structured AI findings (review results shown in place, not only as text)

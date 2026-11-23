@@ -52,7 +52,7 @@ MongoDB Compass, RedisInsight, Neo4j Browser and Kibana Dev Tools, LewIDE puts t
 | ![TimescaleDB](https://img.shields.io/badge/-TimescaleDB-FDB515?logo=timescale&logoColor=black) | TimescaleDB | The same; hypertables open like tables |
 | ![MySQL](https://img.shields.io/badge/-MySQL-4479A1?logo=mysql&logoColor=white) | MySQL, MariaDB, TiDB | The same |
 | ![SQLite](https://img.shields.io/badge/-SQLite-003B57?logo=sqlite&logoColor=white) | SQLite | The same, on a local file |
-| ![SQL Server](https://img.shields.io/badge/-SQL%20Server-CC2927) | Microsoft SQL Server | Data grid with editing, structure |
+| ![SQL Server](https://img.shields.io/badge/-SQL%20Server-CC2927) | Microsoft SQL Server | Data grid with editing, structure and column changes, query plans |
 | ![ClickHouse](https://img.shields.io/badge/-ClickHouse-FFCC01?logo=clickhouse&logoColor=black) | ClickHouse | Fast queries with cancel, structure, import |
 | ![DuckDB](https://img.shields.io/badge/-DuckDB-FFF000?logo=duckdb&logoColor=black) | DuckDB | Built in, no server needed: data grid with editing, structure, import, export |
 | ![Redis](https://img.shields.io/badge/-Redis-DC382D?logo=redis&logoColor=white) | Redis, Valkey | Key browser with editors for every core type |
