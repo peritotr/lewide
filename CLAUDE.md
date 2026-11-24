@@ -197,5 +197,6 @@ See [ROADMAP.md](ROADMAP.md) for the public list. In more detail:
 - **Neo4j:** TLS never tested against a TLS server; no transactions and no cancel; `max_rows` truncates after the download.
 - **Qdrant:** `ping` uses `/healthz`, which needs no key, so a revoked key shows only on the next real call.
 - **Elasticsearch `apiKey`** is a driver option, so it is saved in `connections.json` in plain text, not in the keychain (it is left out of exported files). Moving it to the keychain is a change to the store.
+- **YugabyteDB structure changes are not atomic** (found 2026-11-24 by the trigger live test): YugabyteDB commits each DDL statement on its own unless its transactional DDL is switched on, but `structure::transactional` decides by dialect alone, so a failed change on YugabyteDB says "Nothing was changed" while the earlier statements stayed. Fixing it means asking the connection instead of the dialect (a shared trait change, waiting for approval).
 - **JSON import order:** columns come in file order, not alphabetical (a result of `preserve_order`).
 - Other gaps: the AI chat's "Choose tables" (AI14) needs the core to take a table list; the loading screen's slow-start path was not observed in the real app.

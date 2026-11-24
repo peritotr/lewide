@@ -1145,6 +1145,10 @@ async fn adds_and_drops_indexes_keys_and_triggers() {
 async fn creates_and_replaces_a_trigger_with_a_compound_body() {
     use dbclient_core::structure::{ColumnChange, apply_on, statements};
     let conn = connect_or_skip!();
+    // TiDB has no triggers.
+    if tidb(conn.as_ref()).await {
+        return;
+    }
     conn.execute_all(query(
         "DROP TABLE IF EXISTS trig_items;
          CREATE TABLE trig_items (id int PRIMARY KEY, name varchar(20), touched int DEFAULT 0)",
