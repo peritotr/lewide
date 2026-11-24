@@ -56,6 +56,7 @@ dbclient-store = { version = "0.1.0", path = "../crates/store" }
 tauri-plugin-dialog = "2.8.4"
 dbclient-ai = { version = "0.1.0", path = "../crates/ai" }
 reqwest = { version = "0.13.5", default-features = false }
+tauri-plugin-updater = "2"
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }

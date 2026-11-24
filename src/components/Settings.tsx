@@ -11,6 +11,7 @@ import { inTauri } from "../lib/api";
 import { Button, Dialog, Segmented, Strip, Switch, TextInput } from "./dialog";
 import { Spinner } from "./Results";
 import { Mark, NOT_BUILT, Tag } from "./ui";
+import { checkForUpdates, installUpdate, useUpdates } from "../updates";
 
 type Section = SettingsSection;
 
@@ -158,7 +159,7 @@ function Stepper({ value, min, max, unit, onChange }: { value: number; min: numb
   );
 }
 
-const Toggle = ({ pref, title, description }: { pref: "wordWrap" | "autocomplete" | "uppercaseKeywords" | "highlightStatement" | "previewBeforeApply"; title: string; description: string }) => {
+const Toggle = ({ pref, title, description }: { pref: "wordWrap" | "autocomplete" | "uppercaseKeywords" | "highlightStatement" | "previewBeforeApply" | "updateAutomatically"; title: string; description: string }) => {
   const value = usePrefs((s) => s[pref]);
   return (
     <Row title={title} description={description}>
@@ -372,7 +373,48 @@ function About() {
           <Button onClick={() => void navigator.clipboard?.writeText(system)}>{t("Copy")}</Button>
         </div>
       </div>
-      <p className="text-[12.5px] text-text-3">{t("Update checks are designed but not built yet.")}</p>
+      <Updates />
+    </div>
+  );
+}
+
+/** G06: "Check for updates" with its status, and "Update automatically". */
+function Updates() {
+  const update = useUpdates();
+  const busy = update.status === "checking" || update.status === "downloading" || update.status === "installing";
+  const status =
+    update.status === "checking"
+      ? t("Checking…")
+      : update.status === "current"
+        ? t("LewIDE is up to date.")
+        : update.status === "downloading"
+          ? update.total
+            ? t("Downloading {version}… {percent} %", { version: update.info.version, percent: Math.round((update.downloaded / update.total) * 100) })
+            : t("Downloading {version}…", { version: update.info.version })
+          : update.status === "ready"
+            ? t("{version} is downloaded. Restart to use it.", { version: update.info.version })
+            : update.status === "installing"
+              ? t("Restarting…")
+              : update.status === "failed"
+                ? update.message
+                : null;
+  return (
+    <div className="flex flex-col gap-s3">
+      <Group>{t("Updates")}</Group>
+      <div className="flex items-center gap-s3">
+        {update.status === "ready" ? (
+          <Button variant="primary" onClick={() => void installUpdate()}>
+            {t("Restart now")}
+          </Button>
+        ) : (
+          <Button disabled={busy} onClick={() => void checkForUpdates()}>
+            {t("Check for updates")}
+          </Button>
+        )}
+        {status && <span className={`selectable min-w-0 text-[12.5px] ${update.status === "failed" ? "text-danger" : "text-text-2"}`}>{status}</span>}
+      </div>
+      {update.status === "ready" && update.info.notes && <p className="selectable max-w-[560px] text-[12.5px] leading-[1.5] whitespace-pre-wrap text-text-2">{update.info.notes}</p>}
+      <Toggle pref="updateAutomatically" title={t("Update automatically")} description={t("Looks for a newer version at startup and downloads it; it is installed when you restart. Only the version list on GitHub is asked for.")} />
     </div>
   );
 }

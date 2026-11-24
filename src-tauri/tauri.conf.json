@@ -41,6 +41,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "publisher": "LewIDE contributors",
     "copyright": "Copyright (c) 2026 LewIDE contributors. MIT OR Apache-2.0.",
     "homepage": "https://github.com/peritotr/lewide",
@@ -58,5 +59,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQzM0E0MTE2QUVERjEzQjIKUldTeUU5K3VGa0U2MDhXVFhFdmloeWhTZ2FUUFFITEpCK1hqSSttNnRkV1NXRUV3d3dYNlFudDAK",
+      "endpoints": [
+        "https://github.com/peritotr/lewide/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

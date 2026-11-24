@@ -18,6 +18,8 @@ export interface Prefs {
   nullStyle: "tag" | "dimmed" | "blank";
   /** Show the statements before applying row changes on every connection, not only Production. */
   previewBeforeApply: boolean;
+  /** G06: look for a newer version at startup and download it, to be installed on restart. */
+  updateAutomatically: boolean;
 }
 
 export const DEFAULT_PREFS: Prefs = {
@@ -32,6 +34,7 @@ export const DEFAULT_PREFS: Prefs = {
   numbers: "raw",
   nullStyle: "tag",
   previewBeforeApply: false,
+  updateAutomatically: true,
 };
 
 const KEY = "lewide.prefs";

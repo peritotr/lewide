@@ -19,6 +19,7 @@ import { GraphView } from "./components/GraphView";
 import { VectorView } from "./components/VectorView";
 import { TableView } from "./components/TableView";
 import { AskPanel, reviewMarks } from "./components/ai/AskPanel";
+import { UpdateNotice } from "./components/UpdateNotice";
 import { ChatView } from "./components/ai/ChatView";
 import { SentDialog } from "./components/ai/SentDialog";
 import { usePrefs } from "./prefs";
@@ -415,6 +416,7 @@ export default function App() {
       </div>
       <StatusBar />
       <Dialogs />
+      <UpdateNotice />
     </div>
   );
 }

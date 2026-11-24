@@ -158,6 +158,21 @@ export const demoBackend: Backend = {
   deleteSaved: async () => {},
   // The demo has no files: export pretends to write, import finds nothing new.
   exportConnections: async (ids) => ids.length,
+  // The demo announces a newer version, so the update screens can be reviewed.
+  checkUpdate: async () => {
+    await wait(600);
+    return { version: "0.3.0", current_version: "0.2.1", notes: "Column changes on ClickHouse, triggers, AI review findings." };
+  },
+  downloadUpdate: async (onProgress) => {
+    for (let n = 1; n <= 10; n++) {
+      await wait(150);
+      onProgress(n * 2_400_000, 24_000_000);
+    }
+  },
+  installUpdate: async () => {
+    await wait(300);
+    window.location.reload();
+  },
   importConnections: async () => [],
   connectSaved: async (id) => {
     await wait(600);

@@ -217,6 +217,13 @@ export interface StructureChangeSet {
   changes: ColumnChange[];
 }
 
+/** A newer version announced by the release server. */
+export interface UpdateInfo {
+  version: string;
+  current_version: string;
+  notes: string | null;
+}
+
 /** One key as the key list shows it. `kind` is the store's own type name. */
 export interface KeyEntry {
   key: string;
@@ -681,6 +688,12 @@ export interface Backend {
   deleteSaved(id: string): Promise<void>;
   /** Writes saved connections to a file without passwords or API keys; none given writes all. Answers how many. */
   exportConnections(ids: string[], path: string): Promise<number>;
+  /** A newer version on the release server, or null. Fails in builds without update settings. */
+  checkUpdate(): Promise<UpdateInfo | null>;
+  /** Downloads the update the last check found; `onProgress` gets bytes so far and the total when known. */
+  downloadUpdate(onProgress: (downloaded: number, total: number | null) => void): Promise<void>;
+  /** Installs the downloaded update and starts the new version. */
+  installUpdate(): Promise<void>;
   /** Adds the connections of an exported file as new ones. */
   importConnections(path: string): Promise<SavedConnection[]>;
   connectSaved(id: string, answers?: ConnectAnswers): Promise<number>;
@@ -740,6 +753,17 @@ const tauriBackend: Backend = {
   saveConnection: (connection, options) => invoke("save_connection", { connection, ...options }),
   deleteSaved: (id) => invoke("delete_saved_connection", { id }),
   exportConnections: (ids, path) => invoke("export_connections", { ids, path }),
+  checkUpdate: () => invoke("check_update"),
+  async downloadUpdate(onProgress) {
+    const { listen } = await import("@tauri-apps/api/event");
+    const stop = await listen<[number, number | null]>("update-progress", (event) => onProgress(event.payload[0], event.payload[1]));
+    try {
+      await invoke("download_update");
+    } finally {
+      stop();
+    }
+  },
+  installUpdate: () => invoke("install_update"),
   importConnections: (path) => invoke("import_connections", { path }),
   connectSaved: (id, answers = {}) =>
     invoke("connect_saved", {
@@ -825,6 +849,9 @@ export const api: Backend = {
   saveConnection: (connection, options) => backend.saveConnection(connection, options),
   deleteSaved: (id) => backend.deleteSaved(id),
   exportConnections: (ids, path) => backend.exportConnections(ids, path),
+  checkUpdate: () => backend.checkUpdate(),
+  downloadUpdate: (onProgress) => backend.downloadUpdate(onProgress),
+  installUpdate: () => backend.installUpdate(),
   importConnections: (path) => backend.importConnections(path),
   connectSaved: (id, answers) => backend.connectSaved(id, answers),
   testConnection: (config, savedId) => backend.testConnection(config, savedId),

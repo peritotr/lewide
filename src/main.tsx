@@ -5,6 +5,7 @@ import "./index.css";
 import { preferredLanguage } from "./i18n";
 import { inTauri, initBackend } from "./lib/api";
 import { chooseLanguage, loadDrivers, loadSaved } from "./store";
+import { checkAtStartup } from "./updates";
 
 // The loading screen shows what startup is doing (00-brand); outside the shell there is none.
 const status = (text: string) => {
@@ -25,6 +26,7 @@ initBackend().then((seedDemo) => {
       <App />
     </React.StrictMode>,
   );
+  checkAtStartup();
   // After the first paint: the shell shows this window and closes the loading screen.
   if (inTauri) requestAnimationFrame(() => setTimeout(() => void import("@tauri-apps/api/core").then(({ invoke }) => invoke("app_ready")).catch(() => {}), 0));
 });

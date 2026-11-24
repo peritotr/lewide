@@ -47,7 +47,7 @@ before every write), English and Turkish, light and dark themes.
 **Release**
 
 - Signed and notarized installers for macOS, Windows and Linux
-- Automatic updates
+- Automatic updates (built; switched on with the first release signed for updates)
 
 ## Later
 

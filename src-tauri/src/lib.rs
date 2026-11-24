@@ -1549,6 +1549,9 @@ macro_rules! handlers {
     () => {
         tauri::generate_handler![
             app_ready,
+            check_update,
+            download_update,
+            install_update,
             list_drivers,
             open_connection,
             list_saved_connections,
@@ -1652,6 +1655,103 @@ fn show_main<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
+// ---- Updates ----
+
+/// The update found by the last check, and its downloaded installer.
+#[derive(Default)]
+struct Updates {
+    found: tokio::sync::Mutex<Option<tauri_plugin_updater::Update>>,
+    downloaded: tokio::sync::Mutex<Option<Vec<u8>>>,
+}
+
+/// A newer version announced by the release server.
+#[derive(serde::Serialize)]
+struct UpdateInfo {
+    version: String,
+    current_version: String,
+    /// The release notes, as written on the release.
+    notes: Option<String>,
+}
+
+/// Whether this build knows where to look for updates. Development builds and
+/// builds without the signing key's public half do not.
+fn updates_configured<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
+    app.config().plugins.0.contains_key("updater")
+}
+
+fn update_error(error: tauri_plugin_updater::Error) -> Error {
+    Error::Connect(format!("update: {error}"))
+}
+
+/// Asks the release server for a newer version. Nothing is downloaded yet.
+#[tauri::command]
+async fn check_update<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    updates: State<'_, Updates>,
+) -> Result<Option<UpdateInfo>, Error> {
+    use tauri_plugin_updater::UpdaterExt;
+    if !updates_configured(&app) {
+        return Err(Error::Unsupported("updates in this build"));
+    }
+    let found = app
+        .updater()
+        .map_err(update_error)?
+        .check()
+        .await
+        .map_err(update_error)?;
+    let info = found.as_ref().map(|update| UpdateInfo {
+        version: update.version.clone(),
+        current_version: update.current_version.clone(),
+        notes: update.body.clone(),
+    });
+    *updates.downloaded.lock().await = None;
+    *updates.found.lock().await = found;
+    Ok(info)
+}
+
+/// Downloads the update the last check found and checks its signature.
+/// Progress goes out as `update-progress` events: `[downloaded, total]`.
+#[tauri::command]
+async fn download_update<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    updates: State<'_, Updates>,
+) -> Result<(), Error> {
+    use tauri::Emitter;
+    let Some(update) = updates.found.lock().await.clone() else {
+        return Err(Error::Query("no update to download; check again".into()));
+    };
+    let mut downloaded = 0u64;
+    let bytes = update
+        .download(
+            |chunk, total| {
+                downloaded += chunk as u64;
+                let _ = app.emit("update-progress", (downloaded, total));
+            },
+            || {},
+        )
+        .await
+        .map_err(update_error)?;
+    *updates.downloaded.lock().await = Some(bytes);
+    Ok(())
+}
+
+/// Installs the downloaded update and starts the new version. On Windows the
+/// installer closes the app by itself.
+#[tauri::command]
+async fn install_update<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    updates: State<'_, Updates>,
+) -> Result<(), Error> {
+    let (Some(update), Some(bytes)) = (
+        updates.found.lock().await.clone(),
+        updates.downloaded.lock().await.take(),
+    ) else {
+        return Err(Error::Query("the update is not downloaded yet".into()));
+    };
+    update.install(bytes).map_err(update_error)?;
+    app.restart();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1673,6 +1773,14 @@ pub fn run() {
                 dbclient_ai::http_client()?,
             ));
             app.manage(Startup::default());
+            app.manage(Updates::default());
+            // Registered only when the build carries the updater's settings
+            // (the release key's public half); without them the plugin would
+            // stop the app from starting.
+            if updates_configured(app.handle()) {
+                app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
+            }
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 std::thread::sleep(SPLASH_AFTER);
