@@ -629,6 +629,10 @@ impl Connection for PgvectorConnection {
         self.inner.dialect()
     }
 
+    fn transactional_ddl(&self) -> bool {
+        self.inner.transactional_ddl()
+    }
+
     async fn in_transaction(&self) -> Result<bool> {
         self.inner.in_transaction().await
     }

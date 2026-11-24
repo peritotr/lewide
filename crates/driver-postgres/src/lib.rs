@@ -97,16 +97,17 @@ impl Driver for PostgresDriver {
         };
 
         // CockroachDB speaks this protocol but differs in a few places below.
-        let cockroach = match client.query_opt("SELECT version()", &[]).await {
-            Ok(Some(row)) => cockroach_version(&row.get::<_, String>(0)),
-            _ => None,
+        let version = match client.query_opt("SELECT version()", &[]).await {
+            Ok(Some(row)) => row.get::<_, String>(0),
+            _ => String::new(),
         };
 
         Ok(Box::new(PostgresConnection {
             cancel_token: client.cancel_token(),
             client,
             tls,
-            cockroach,
+            cockroach: cockroach_version(&version),
+            yugabyte: yugabyte(&version),
             running: Mutex::new(()),
         }))
     }
@@ -119,6 +120,9 @@ struct PostgresConnection {
     tls: Option<MakeRustlsConnect>,
     /// The CockroachDB version when the server is one.
     cockroach: Option<String>,
+    /// YugabyteDB commits each DDL statement on its own (unless its
+    /// transactional DDL is switched on), so structure changes are not atomic.
+    yugabyte: bool,
     /// One statement at a time per session. `cancel` does not take this lock.
     running: Mutex<()>,
 }
@@ -238,6 +242,10 @@ impl Connection for PostgresConnection {
             return Err(Error::Query("no statement to run".into()));
         }
         Ok(sets)
+    }
+
+    fn transactional_ddl(&self) -> bool {
+        !self.yugabyte
     }
 
     async fn server_version(&self) -> Result<Option<String>> {
@@ -787,6 +795,11 @@ fn cockroach_version(version: &str) -> Option<String> {
     )
 }
 
+/// YugabyteDB's `version()` reads "PostgreSQL 15.12-YB-2025.2.0.0-b0 on …".
+fn yugabyte(version: &str) -> bool {
+    version.contains("-YB-")
+}
+
 /// The engine's own version where the server is a PostgreSQL derivative that
 /// reports the PostgreSQL version it builds on: YugabyteDB writes
 /// "15.12-YB-2025.2.0.0-b0", TimescaleDB is an extension with its own version.
@@ -1004,6 +1017,10 @@ mod unit_tests {
             "2.25.0 (PostgreSQL 17.7 (Ubuntu 17.7-1))"
         );
         assert_eq!(engine_version("17.2", None), "17.2");
+        assert!(yugabyte(
+            "PostgreSQL 15.12-YB-2025.2.0.0-b0 on aarch64-unknown-linux-gnu"
+        ));
+        assert!(!yugabyte("PostgreSQL 17.7 (Ubuntu 17.7-1) on x86_64"));
     }
 
     #[test]

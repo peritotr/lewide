@@ -1327,12 +1327,21 @@ async fn creates_and_replaces_a_trigger_with_its_function() {
     ])
     .await
     .unwrap_err();
-    assert!(error.to_string().contains("Nothing was changed"), "{error}");
     let structure = conn.table_structure(None, "trig_items").await.unwrap();
-    // YugabyteDB commits each DDL statement on its own (transactional DDL is
-    // off by default), so the drop stays although the error says otherwise.
-    let kept = if yugabyte(conn.as_ref()).await { 0 } else { 1 };
-    assert_eq!(structure.triggers.len(), kept);
+    // YugabyteDB commits each DDL statement on its own, so the drop stays
+    // and the error says so.
+    if yugabyte(conn.as_ref()).await {
+        assert!(
+            error
+                .to_string()
+                .contains("The statement before it was applied"),
+            "{error}"
+        );
+        assert_eq!(structure.triggers.len(), 0);
+    } else {
+        assert!(error.to_string().contains("Nothing was changed"), "{error}");
+        assert_eq!(structure.triggers.len(), 1);
+    }
     conn.execute_all(query(
         "DROP TABLE trig_items; DROP FUNCTION trig_items_fn()",
         None,

@@ -690,7 +690,7 @@ pub async fn apply_on(conn: &dyn Connection, statements: Vec<String>) -> Result<
             max_rows: None,
         })
     };
-    let atomic = transactional(conn.dialect());
+    let atomic = conn.transactional_ddl();
     if atomic {
         run(conn.dialect().begin()).await?;
     }
@@ -702,6 +702,8 @@ pub async fn apply_on(conn: &dyn Connection, statements: Vec<String>) -> Result<
             }
             let tail = if atomic || index == 0 {
                 "Nothing was changed.".to_owned()
+            } else if index == 1 {
+                "The statement before it was applied and cannot be rolled back.".to_owned()
             } else {
                 format!("The {index} statements before it were applied and cannot be rolled back.")
             };

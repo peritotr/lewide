@@ -119,6 +119,13 @@ pub trait Connection: Send + Sync {
     /// The SQL flavour, for writing values into statements.
     fn dialect(&self) -> SqlDialect;
 
+    /// Whether a rolled-back transaction also undoes DDL on this server. Most
+    /// engines answer by dialect; an engine that commits each DDL statement on
+    /// its own while speaking another's dialect (YugabyteDB) says no here.
+    fn transactional_ddl(&self) -> bool {
+        crate::structure::transactional(self.dialect())
+    }
+
     /// Whether the session has a transaction open that the user began.
     async fn in_transaction(&self) -> Result<bool>;
 

@@ -685,7 +685,8 @@ export function AlterDialog({ tab, view, conn, statements }: { tab: Tab; view: V
   const [typed, setTyped] = useState("");
   const edits = view.columnEdits;
   const dataLoss = edits.some((e) => e.kind.startsWith("drop") || (e.kind === "modify" && e.from.type_name.trim() !== e.to.type_name.trim()));
-  const transactional = conn.driver.id !== "mysql" && conn.driver.id !== "clickhouse";
+  // YugabyteDB speaks PostgreSQL but commits each DDL statement on its own.
+  const transactional = conn.driver.id !== "mysql" && conn.driver.id !== "clickhouse" && conn.engine !== "Yb";
   const allowed = !production || typed === conn.name;
   const apply = () => {
     if (!allowed) return;
