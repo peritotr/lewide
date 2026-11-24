@@ -1,6 +1,6 @@
 [package]
 name = "dbclient"
-version = "0.2.1"
+version = "0.3.0"
 description = "LewIDE: an open-source desktop client for every database"
 edition = "2024"
 license.workspace = true
